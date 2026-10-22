@@ -1,0 +1,71 @@
+name: Release
+
+# 仅准备和上传产物，不创建标签、GitHub Release 或执行公证。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notchx-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: swift:6.2.3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install source-check dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends python3 openssl
+      - name: Validate source, metadata and signing failure paths
+        run: bash scripts/test.sh
+
+  release:
+    needs: source-checks
+    if: github.ref == 'refs/heads/main' && github.repository == 'oevery/notchx'
+    runs-on: macos-26
+    timeout-minutes: 45
+    environment: release-signing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Show SDK and compiler
+        run: xcodebuild -version && xcrun --sdk macosx --show-sdk-version && swift --version
+      - name: Read the single version configuration
+        id: metadata
+        run: |
+          python3 scripts/release.py metadata > "$RUNNER_TEMP/notchx-metadata.json"
+          jq -r '"artifact=" + .artifact' "$RUNNER_TEMP/notchx-metadata.json" >> "$GITHUB_OUTPUT"
+      - name: Test native app without signing credentials
+        run: bash scripts/test-native.sh -quiet -resultBundlePath build/release-tests.xcresult
+      - name: Build, sign with the fixed identity and verify the extracted archive
+        env:
+          NOTCHX_SIGNING_P12_BASE64: ${{ secrets.NOTCHX_SIGNING_P12_BASE64 }}
+          NOTCHX_SIGNING_P12_PASSWORD: ${{ secrets.NOTCHX_SIGNING_P12_PASSWORD }}
+        run: bash scripts/build-app.sh
+      - name: Save verified self-signed artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact }}
+          path: |
+            build/release/${{ steps.metadata.outputs.artifact }}.zip
+            build/release/${{ steps.metadata.outputs.artifact }}.zip.sha256
+            build/release/${{ steps.metadata.outputs.artifact }}.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Summarize distribution limits
+        run: |
+          {
+            echo '### NotchX Release preparation'
+            echo '固定自签，未经 Apple 公证；不是 Developer ID 分发包。'
+            echo '本次仅上传产物，不创建标签或 GitHub Release。'
+            echo 'Gatekeeper 放行与权限升级保留仍需用户验收。'
+          } >> "$GITHUB_STEP_SUMMARY"

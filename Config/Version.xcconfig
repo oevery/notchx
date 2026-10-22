@@ -1,0 +1,5 @@
+// 应用、打包文件名和 Release CI 共用的版本信息。
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+NOTCHX_AUTHOR = oevery
+NOTCHX_COPYRIGHT = Copyright © 2026 oevery. All rights reserved.

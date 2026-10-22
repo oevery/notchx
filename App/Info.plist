@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>NotchX needs calendar access to show upcoming events.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>NotchX uses Bluetooth access to show connected devices and available battery information.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>NotchX uses your location to show local weather.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>NotchX uses your location to show local weather.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>NotchX uses your location to show local weather.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>NotchX uses the microphone for audio visualization and to follow your reading in Teleprompter.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>NotchX uses speech recognition to follow your reading in Teleprompter.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>NotchX uses Automation access to detect and control media playing in browsers and music apps.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>$(NOTCHX_COPYRIGHT)</string>
+	<key>NotchXAuthor</key>
+	<string>$(NOTCHX_AUTHOR)</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>CFBundleDisplayName</key>
+	<string>NotchX</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>app.notchx.module-order</string>
+			<key>UTTypeDescription</key>
+			<string>NotchX module order</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+		</dict>
+	</array>
+</dict>
+</plist>

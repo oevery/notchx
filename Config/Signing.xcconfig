@@ -1,0 +1,10 @@
+#include "Version.xcconfig"
+
+// Xcode 调试默认使用临时签名；发布包由 release.py 使用固定证书签名。
+// Ad-hoc identity cannot preserve macOS privacy grants across code changes.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+
+// Copy the example to Signing.local.xcconfig and select an existing identity.
+// The local file is ignored by Git and survives project regeneration.
+#include? "Signing.local.xcconfig"

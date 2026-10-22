@@ -1,0 +1,20 @@
+.build/
+.swiftpm/
+.DS_Store
+build/
+.toolchains/
+# Xcode user state, including inside a project's embedded workspace.
+xcuserdata/
+Config/Signing.local.xcconfig
+
+__pycache__/
+*.pyc
+
+# 私钥、P12 和签名密码不得进入仓库；公钥证书 .cer 可以跟踪。
+*.p12
+*.pfx
+*.key
+*.keychain
+*.keychain-db
+*.password
+*.pem

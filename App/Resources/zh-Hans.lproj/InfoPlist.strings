@@ -1,0 +1,9 @@
+"NSCalendarsFullAccessUsageDescription" = "NotchX 需要日历访问权限来显示即将开始的日程。";
+"NSBluetoothAlwaysUsageDescription" = "NotchX 使用蓝牙权限来显示已连接设备和可获取的电量信息。";
+"NSLocationUsageDescription" = "NotchX 使用你的位置来显示当地天气。";
+"NSLocationAlwaysAndWhenInUseUsageDescription" = "NotchX 使用你的位置来显示当地天气。";
+"NSLocationWhenInUseUsageDescription" = "NotchX 使用你的位置来显示当地天气。";
+"NSMicrophoneUsageDescription" = "NotchX 使用麦克风显示音频可视化效果，并跟踪提词器朗读进度。";
+"NSSpeechRecognitionUsageDescription" = "NotchX 使用语音识别来跟踪你朗读提词器文稿的进度。";
+"NSAppleEventsUsageDescription" = "NotchX 使用自动化权限来检测和控制浏览器及音乐应用中正在播放的媒体。";
+"CFBundleDisplayName" = "NotchX";

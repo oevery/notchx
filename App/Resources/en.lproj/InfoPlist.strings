@@ -1,0 +1,9 @@
+"NSCalendarsFullAccessUsageDescription" = "NotchX needs calendar access to show upcoming events.";
+"NSBluetoothAlwaysUsageDescription" = "NotchX uses Bluetooth access to show connected devices and available battery information.";
+"NSLocationUsageDescription" = "NotchX uses your location to show local weather.";
+"NSLocationAlwaysAndWhenInUseUsageDescription" = "NotchX uses your location to show local weather.";
+"NSLocationWhenInUseUsageDescription" = "NotchX uses your location to show local weather.";
+"NSMicrophoneUsageDescription" = "NotchX uses the microphone for audio visualization and to follow your reading in Teleprompter.";
+"NSSpeechRecognitionUsageDescription" = "NotchX uses speech recognition to follow your reading in Teleprompter.";
+"NSAppleEventsUsageDescription" = "NotchX uses Automation access to detect and control media playing in browsers and music apps.";
+"CFBundleDisplayName" = "NotchX";

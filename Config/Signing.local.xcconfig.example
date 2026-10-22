@@ -1,0 +1,4 @@
+// Use your own Team ID and an existing Apple Development signing identity.
+// Do not commit the local copy or invent a Team ID.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+CODE_SIGN_IDENTITY = Apple Development
