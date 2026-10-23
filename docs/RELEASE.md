@@ -12,7 +12,7 @@
 
 ```sh
 bash scripts/test.sh
-bash scripts/build-app.sh
+python3 scripts/release.py build
 python3 scripts/release.py verify
 ```
 
@@ -26,7 +26,7 @@ python3 scripts/release.py verify
 
 `python3 scripts/release.py init-identity` **仅用于首次创建身份**，现有证书或目录存在时拒绝覆盖。其他机器和 CI 恢复同一份 P12，不重新生成。丢失私钥、证书轮换或以后切换 Developer ID 都需要重新验收授权保留。
 
-可用 `bash scripts/build-app.sh --identity-directory /安全的仓库外目录` 指定凭据位置。Xcode 普通 Run 和原生测试继续使用隔离的开发构建，不读取发布私钥；权限升级验收使用固定签名后的 `build/NotchX.app`。
+可用 `python3 scripts/release.py build --identity-directory /安全的仓库外目录` 指定凭据位置。Xcode 普通 Run 和原生测试继续使用隔离的开发构建，不读取发布私钥；权限升级验收使用固定签名后的 `build/NotchX.app`。
 
 打包只支持 Release：先构建双架构，再由内到外签署媒体框架、桥接程序和主应用。仅修改构建副本，不修改源目录中的第三方框架。构建子进程不继承签名 Secrets；临时钥匙串在成功和失败时均清理。不安装信任根、不修改 Gatekeeper、不移除隔离标记，不安装或启动应用。
 
@@ -34,7 +34,7 @@ python3 scripts/release.py verify
 
 ## 手动 Release CI 与 Secrets
 
-`.github/workflows/release.yml` 只接受手动触发，签名任务仅允许 `oevery/notchx` 的 `main`。先通过源码检查和原生 XCTest，再读取凭据；所有步骤绑定同一次触发的精确提交。
+`.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。使用单个 `macos-26` 任务运行 `scripts/test.sh`（工具检查及原生 XCTest），通过后才读取签名凭据并打包；所有步骤绑定同一次触发的精确提交，不再分流到 Linux。
 
 请在仓库创建 **`release-signing` Environment**，限制为 `main` 分支，并在可用时启用人工审批。该 Environment 配置两个 Secrets：
 

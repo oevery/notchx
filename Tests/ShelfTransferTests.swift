@@ -206,14 +206,17 @@ final class ShelfTransferTests: XCTestCase {
                 return nil
             }
             let provider = NSItemProvider()
+            let pendingProgress = Progress(totalUnitCount: 1)
             provider.registerFileRepresentation(forTypeIdentifier: UTType.pdf.identifier, fileOptions: [], visibility: .all) { completion in
                 gate.set { completion(original, false, nil) }
                 started.fulfill()
-                return Progress(totalUnitCount: 1)
+                return pendingProgress
             }
             _ = store.handleDrop(providers: [completedProvider, provider])
             await fulfillment(of: [started], timeout: 3)
             store.setEnabled(false)
+            store.setEnabled(false)
+            XCTAssertTrue(pendingProgress.isCancelled)
             gate.deliver()
             try await Task.sleep(for: .milliseconds(100))
             XCTAssertEqual(store.items.count, 2)

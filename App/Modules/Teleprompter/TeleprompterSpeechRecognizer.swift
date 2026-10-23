@@ -15,11 +15,11 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
 
     private var recognitionGeneration = UUID()
     private var wantsRecognition = false
-    private var speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private var audioEngine: AVAudioEngine?
-    private var installedTapNode: AVAudioInputNode?
+    private var speechRecognizer: (any TeleprompterSpeechService)?
+    private var recognitionRequest: (any TeleprompterRecognitionRequest)?
+    private var recognitionTask: (any TeleprompterRecognitionTask)?
+    private var audioEngine: (any TeleprompterAudioEngine)?
+    private var installedTapNode: (any TeleprompterAudioInput)?
     private var sourceText = ""
     private var sourceLocale = ""
     private var sourceDisplayOffsets = TeleprompterTextTokenizer.SpeechMatchingText.empty
@@ -31,6 +31,24 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
     private var preemptiveRestartTimer: Timer?
     private var recentMatchPositions: [Int] = []
     private var requestLock = NSLock()
+
+    private let microphoneAccess: () -> Bool
+    private let speechAccess: () -> Bool
+    private let requestAccess: () -> Void
+    private let makeEngine: () -> any TeleprompterAudioEngine
+    private let makeRecognizer: (String) -> (any TeleprompterSpeechService)?
+
+    init(microphoneAccess: @escaping () -> Bool = { PermissionsManager.shared.checkMicrophone() },
+         speechAccess: @escaping () -> Bool = { PermissionsManager.shared.checkSpeechRecognition() },
+         requestAccess: @escaping () -> Void = { PermissionsManager.shared.requestTeleprompterWordTrackingAccess() },
+         makeEngine: @escaping () -> any TeleprompterAudioEngine = { SystemTeleprompterAudioEngine() },
+         makeRecognizer: @escaping (String) -> (any TeleprompterSpeechService)? = { SystemTeleprompterSpeechService(locale: $0) }) {
+        self.microphoneAccess = microphoneAccess
+        self.speechAccess = speechAccess
+        self.requestAccess = requestAccess
+        self.makeEngine = makeEngine
+        self.makeRecognizer = makeRecognizer
+    }
 
     private struct SourceToken {
         let text: String
@@ -67,15 +85,15 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
 
         guard !sourceText.isEmpty else { return }
 
-        guard PermissionsManager.shared.checkMicrophone() else {
+        guard microphoneAccess() else {
             error = L10n.text("Microphone access is required for Word Tracking.")
-            PermissionsManager.shared.requestTeleprompterWordTrackingAccess()
+            requestAccess()
             return
         }
 
-        guard PermissionsManager.shared.checkSpeechRecognition() else {
+        guard speechAccess() else {
             error = L10n.text("Speech Recognition access is required for Word Tracking.")
-            PermissionsManager.shared.requestTeleprompterWordTrackingAccess()
+            requestAccess()
             return
         }
 
@@ -129,7 +147,7 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
         cleanupRecognition()
         let generation = recognitionGeneration
 
-        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
+        speechRecognizer = makeRecognizer(localeIdentifier)
         guard let speechRecognizer, speechRecognizer.isAvailable else {
             error = L10n.text("Speech recognizer is not available for the selected language.")
             stop()
@@ -137,36 +155,31 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
             return
         }
 
-        let audioEngine = AVAudioEngine()
+        let audioEngine = makeEngine()
         self.audioEngine = audioEngine
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.taskHint = .dictation
-        request.addsPunctuation = false
-        request.contextualStrings = contextualStrings()
+        let request = speechRecognizer.makeRequest(contextualStrings: contextualStrings())
         recognitionRequest = request
 
-        let inputNode = audioEngine.inputNode
-        let hardwareFormat = inputNode.outputFormat(forBus: 0)
+        let inputNode = audioEngine.input
+        let hardwareFormat = inputNode.outputFormat()
         guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
             scheduleRestart(localeIdentifier: localeIdentifier, after: 0.5)
             return
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 512, format: hardwareFormat) { [weak self] buffer, _ in
+        inputNode.installTap(format: hardwareFormat) { [weak self] buffer in
             self?.append(buffer, to: request)
             self?.recordAudioLevel(from: buffer, generation: generation)
         }
         installedTapNode = inputNode
 
-        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+        recognitionTask = speechRecognizer.recognize(request) { [weak self] spoken, error in
             guard let self else { return }
-            if let result {
+            if let spoken {
                 DispatchQueue.main.async {
                     guard self.wantsRecognition, self.recognitionGeneration == generation else { return }
                     self.retryCount = 0
-                    let spoken = result.bestTranscription.formattedString
                     self.lastSpokenText = spoken
                     self.matchCharacters(spoken: spoken)
                 }
@@ -218,7 +231,7 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
         }
     }
 
-    private func append(_ buffer: AVAudioPCMBuffer, to request: SFSpeechAudioBufferRecognitionRequest) {
+    private func append(_ buffer: AVAudioPCMBuffer, to request: any TeleprompterRecognitionRequest) {
         requestLock.lock()
         if recognitionRequest === request { request.append(buffer) }
         requestLock.unlock()
@@ -301,7 +314,7 @@ final class TeleprompterSpeechRecognizer: ObservableObject {
         }
         // Accessing inputNode can initialize audio hardware, even on an idle
         // engine. Only remove a tap from the node captured when it was installed.
-        tapNode?.removeTap(onBus: 0)
+        tapNode?.removeTap()
     }
 
     private func contextualStrings() -> [String] {

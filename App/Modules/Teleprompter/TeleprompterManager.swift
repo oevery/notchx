@@ -35,7 +35,8 @@ enum TeleprompterListeningMode: String, CaseIterable, Identifiable {
 @MainActor
 final class TeleprompterManager: ObservableObject {
     static let shared = TeleprompterManager()
-    let speechRecognizer = TeleprompterSpeechRecognizer()
+    let speechRecognizer: TeleprompterSpeechRecognizer
+    private let requestWordTrackingAccess: () -> Void
     let sessionStore: TeleprompterSessionStore
     private let preferences: UserDefaults
     private let presentationState: AppState
@@ -113,7 +114,7 @@ final class TeleprompterManager: ObservableObject {
             pendingResumePosition = nil
             sessionStore.clearPosition()
             if !isReloadingPreferences, listeningMode == .wordTracking, presentationState.teleprompterEnabled {
-                PermissionsManager.shared.requestTeleprompterWordTrackingAccess()
+                requestWordTrackingAccess()
             }
         }
     }
@@ -159,7 +160,10 @@ final class TeleprompterManager: ObservableObject {
     private var countdownGeneration = UUID()
     private var countdownTimer: Timer?
 
-    init(preferences: UserDefaults = .standard, globalShortcuts: TeleprompterShortcutControlling? = nil, appState: AppState? = nil) {
+    init(preferences: UserDefaults = .standard, globalShortcuts: TeleprompterShortcutControlling? = nil, appState: AppState? = nil,
+         speechRecognizer: TeleprompterSpeechRecognizer? = nil, requestWordTrackingAccess: (() -> Void)? = nil) {
+        self.speechRecognizer = speechRecognizer ?? TeleprompterSpeechRecognizer()
+        self.requestWordTrackingAccess = requestWordTrackingAccess ?? { PermissionsManager.shared.requestTeleprompterWordTrackingAccess() }
         self.preferences = preferences
         self.presentationState = appState ?? .shared
         self.globalShortcuts = globalShortcuts ?? TeleprompterGlobalShortcuts()
@@ -183,7 +187,7 @@ final class TeleprompterManager: ObservableObject {
         self.speechLocale = Self.defaultSpeechLocale(
             stored: preferences.string(forKey: SettingsDefaults.Teleprompter.speechLocaleKey)
         )
-        speechRecognizer.onTerminalFailure = { [weak self] in
+        self.speechRecognizer.onTerminalFailure = { [weak self] in
             guard let self, self.isPlaying else { return }
             self.pause()
             self.pendingCountdown = true

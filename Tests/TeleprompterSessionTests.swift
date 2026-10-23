@@ -15,6 +15,87 @@ private final class ShortcutRegistrationProbe: TeleprompterShortcutControlling {
 
 @MainActor
 final class TeleprompterSessionTests: XCTestCase {
+    func testCountdownDisableRestoreAndParagraphNavigationPreserveUserContent() {
+        withPreferences { preferences in
+            let state = AppState(preferenceStore: preferences)
+            state.setModuleEnabled(.teleprompter, enabled: true)
+            var requests = 0
+            let speech = TeleprompterSpeechRecognizer(microphoneAccess: { false }, speechAccess: { false },
+                requestAccess: { requests += 1 }, makeEngine: { fatalError("This test must never start audio") },
+                makeRecognizer: { _ in XCTFail("This test must never start recognition"); return nil })
+            let manager = TeleprompterManager(preferences: preferences, globalShortcuts: ShortcutRegistrationProbe(),
+                appState: state, speechRecognizer: speech, requestWordTrackingAccess: { requests += 1 })
+            defer { manager.setEnabled(false) }
+            manager.setScript("Preserve this script")
+            manager.play()
+            XCTAssertFalse(manager.isPlaying || manager.isCountingDown)
+            state.dismiss()
+            XCTAssertNotEqual(state.compactPresentationModule, .builtIn(.teleprompter))
+            manager.setEnabled(true)
+            manager.play(); manager.play()
+            XCTAssertEqual(manager.countdownValue, 3)
+            manager.pause(); manager.play()
+            XCTAssertEqual(manager.countdownValue, 3)
+            manager.setScript("Edited during countdown")
+            XCTAssertFalse(manager.isPlaying || manager.isCountingDown)
+            state.dismiss()
+            XCTAssertNotEqual(state.compactPresentationModule, .builtIn(.teleprompter))
+            manager.setScript("Preserve this script")
+            manager.setEnabled(false)
+            manager.play()
+            XCTAssertFalse(manager.isPlaying || manager.isCountingDown)
+            manager.setEnabled(true)
+            manager.play(); manager.pause()
+            manager.listeningMode = .wordTracking
+            manager.play()
+            manager.setEnabled(false)
+            XCTAssertFalse(manager.isPlaying || speech.isListening)
+            XCTAssertEqual(manager.scriptText, "Preserve this script")
+            let beforeRestore = requests
+            preferences.set(SettingsDefaults.Teleprompter.listeningMode.value, forKey: SettingsDefaults.Teleprompter.listeningMode.key)
+            preferences.set(SettingsDefaults.Teleprompter.scrollSpeed.value, forKey: SettingsDefaults.Teleprompter.scrollSpeed.key)
+            preferences.set(SettingsDefaults.Teleprompter.fontSize.value, forKey: SettingsDefaults.Teleprompter.fontSize.key)
+            preferences.set(SettingsDefaults.Teleprompter.alignment.value, forKey: SettingsDefaults.Teleprompter.alignment.key)
+            preferences.removeObject(forKey: SettingsDefaults.Teleprompter.speechLocaleKey)
+            manager.reloadRestoredPreferences()
+            XCTAssertEqual(manager.listeningMode, .classic)
+            XCTAssertEqual(manager.scrollSpeed, 7)
+            XCTAssertEqual(manager.fontSize, 22)
+            XCTAssertEqual(manager.textAlignmentIndex, 1)
+            XCTAssertEqual(manager.scriptText, "Preserve this script")
+            XCTAssertNil(preferences.object(forKey: SettingsDefaults.Teleprompter.speechLocaleKey))
+            XCTAssertEqual(requests, beforeRestore)
+            manager.play()
+            XCTAssertFalse(manager.isPlaying || manager.isCountingDown || speech.isListening)
+            manager.setEnabled(true)
+            manager.setScript("First paragraph\n\n第二段内容\nFinal paragraph")
+            manager.countdownSeconds = 0
+            manager.play()
+            XCTAssertTrue(manager.isPlaying)
+            XCTAssertFalse(manager.isCountingDown)
+            manager.reportProgress(0.25)
+            XCTAssertEqual(manager.readingProgress, 0.25)
+            manager.jumpToParagraph(manager.paragraphs[1].id)
+            XCTAssertFalse(manager.isPlaying || speech.isListening)
+            XCTAssertEqual(manager.seekRequest.displayOffset, manager.paragraphs[1].id)
+            manager.reportProgress(0.99, paragraphOffset: manager.paragraphs[0].id)
+            manager.perform(.nextParagraph)
+            XCTAssertEqual(manager.seekRequest.displayOffset, manager.paragraphs[1].id)
+            manager.perform(.nextParagraph)
+            XCTAssertEqual(manager.seekRequest.displayOffset, manager.paragraphs[2].id)
+            manager.perform(.previousParagraph)
+            XCTAssertEqual(manager.seekRequest.displayOffset, manager.paragraphs[1].id)
+            manager.perform(.slower)
+            XCTAssertEqual(manager.scrollSpeed, 6)
+            manager.countdownSeconds = 2
+            manager.play()
+            XCTAssertEqual(manager.countdownValue, 2)
+            manager.setEnabled(false)
+            XCTAssertFalse(manager.isCountingDown)
+            state.dismiss()
+            XCTAssertNotEqual(state.compactPresentationModule, .builtIn(.teleprompter))
+        }
+    }
     func testHeldGlobalHotkeyDoesNotRepeatedlyTogglePlayback() {
         var state = TeleprompterShortcutPressState()
         XCTAssertTrue(state.shouldFire(id: 1, pressed: true))

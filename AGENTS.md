@@ -1,6 +1,6 @@
 # NotchX 工程约定
 
-- 最低 macOS 26，使用 Swift 6 工具链和 Swift 5 语言模式。Linux 检查只能验证源码语法与资源；原生编译和测试需要 Xcode 26 或更新版本。不增加 macOS 26 之前的兼容分支。
+- 最低 macOS 26，使用 Swift 6 工具链和 Swift 5 语言模式。完整检查与 CI 统一使用 macOS、Xcode 26 或更新版本；行为测试直接运行 Tests/ 中的 XCTest，不裁剪源码拼接跨平台替身。不增加 macOS 26 之前的兼容分支。
 - 仅保留一个 Xcode 应用，源码位于 App/，原生测试位于 Tests/。没有产品需求时不恢复旧 SwiftPM／NotchKit 宿主、并行宿主或公共 SDK。
 - 宿主拥有呈现、焦点、生命周期、取消、尺寸、活动选择和权限协调。
 - 界面优先使用原生 SwiftUI 控件与容器；窗口、焦点和永久侧栏使用公开 AppKit API。没有明确需求，不覆盖系统背景、选择、尺寸或动画。

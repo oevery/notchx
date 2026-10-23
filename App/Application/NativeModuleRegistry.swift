@@ -1,12 +1,60 @@
 import Foundation
 
-/// Compiled-in manager activation. Presentation and refresh cancellation remain
-/// owned by the host rather than a plugin runtime.
+/// A metatype identifies the actual manager without constructing its shared
+/// instance. Tests replace only invocation, after the production routing switch.
+@MainActor
+protocol NativeModuleManaging: AnyObject {
+    static func setNativeModuleEnabled(_ enabled: Bool) -> Bool
+}
+
+@MainActor
+private protocol SharedNativeModuleManaging: NativeModuleManaging {
+    static var shared: Self { get }
+    func setEnabled(_ enabled: Bool)
+}
+
+extension SharedNativeModuleManaging {
+    static func setNativeModuleEnabled(_ enabled: Bool) -> Bool {
+        shared.setEnabled(enabled)
+        return true
+    }
+}
+
+extension NowPlayingManager: SharedNativeModuleManaging {}
+extension VolumeManager: SharedNativeModuleManaging {}
+extension BatteryManager: SharedNativeModuleManaging {}
+extension ShelfStore: SharedNativeModuleManaging {}
+extension WiFiManager: SharedNativeModuleManaging {}
+extension BluetoothManager: SharedNativeModuleManaging {}
+extension CalendarManager: SharedNativeModuleManaging {}
+extension WeatherManager: SharedNativeModuleManaging {}
+extension NotificationManager: SharedNativeModuleManaging {}
+extension TeleprompterManager: SharedNativeModuleManaging {}
+extension AgentManager: SharedNativeModuleManaging {}
+extension ToolsManager: NativeModuleManaging {
+    static func setNativeModuleEnabled(_ enabled: Bool) -> Bool {
+        shared.setEnabled(enabled)
+    }
+}
+
+/// Compiled-in manager activation. Device/service side effects are supplied by
+/// the host; registry selection and failed-disable recovery stay here.
 @MainActor
 final class NativeModuleRegistry {
     static let modules = ModuleType.allCases
     private var activatedModules: Set<ModuleType> = []
     private var activatedBluetooth = false
+    private let updateManager: (any NativeModuleManaging.Type, Bool) -> Bool
+    private let bluetoothAllowed: () -> Bool
+    private let refreshCalendarAccess: () -> Void
+
+    init(updateManager: ((any NativeModuleManaging.Type, Bool) -> Bool)? = nil,
+         bluetoothAllowed: (() -> Bool)? = nil,
+         refreshCalendarAccess: (() -> Void)? = nil) {
+        self.updateManager = updateManager ?? { $0.setNativeModuleEnabled($1) }
+        self.bluetoothAllowed = bluetoothAllowed ?? { PermissionsManager.shared.check(.bluetooth) == true }
+        self.refreshCalendarAccess = refreshCalendarAccess ?? { CalendarManager.shared.refreshAccessStatus() }
+    }
 
     func activateEnabledModules(in state: AppState, refreshPermissions: Bool = false,
                                 configure: (ModuleType) -> Void = { _ in }) {
@@ -20,39 +68,17 @@ final class NativeModuleRegistry {
                 continue
             }
             configure(module)
-            switch module {
-            case .nowPlaying:
-                NowPlayingManager.shared.setEnabled(true)
-            case .volumeHUD:
-                VolumeManager.shared.setEnabled(true)
-            case .battery:
-                BatteryManager.shared.setEnabled(true)
-            case .shelf:
-                ShelfStore.shared.setEnabled(true)
-            case .connectivity:
-                WiFiManager.shared.setEnabled(true)
-                if PermissionsManager.shared.check(.bluetooth) == true {
-                    BluetoothManager.shared.setEnabled(true)
+            _ = setEnabled(module, true)
+            if module == .connectivity {
+                if bluetoothAllowed() {
+                    _ = updateManager(BluetoothManager.self, true)
                     activatedBluetooth = true
                 } else if activatedBluetooth {
-                    BluetoothManager.shared.setEnabled(false)
+                    _ = updateManager(BluetoothManager.self, false)
                     activatedBluetooth = false
                 }
-            case .calendar:
-                // Keep user intent enabled while CalendarManager gates work on permission.
-                CalendarManager.shared.setEnabled(true)
-                if refreshPermissions { CalendarManager.shared.refreshAccessStatus() }
-            case .weather:
-                WeatherManager.shared.setEnabled(true)
-            case .notifications:
-                NotificationManager.shared.setEnabled(true)
-            case .teleprompter:
-                TeleprompterManager.shared.setEnabled(true)
-            case .agent:
-                AgentManager.shared.setEnabled(true)
-            case .tools:
-                ToolsManager.shared.setEnabled(true)
             }
+            if module == .calendar && refreshPermissions { refreshCalendarAccess() }
             activatedModules.insert(module)
         }
     }
@@ -64,34 +90,27 @@ final class NativeModuleRegistry {
 
     @discardableResult
     private func deactivate(_ module: ModuleType) -> Bool {
-        switch module {
-        case .connectivity:
-            WiFiManager.shared.setEnabled(false)
-            if activatedBluetooth {
-                BluetoothManager.shared.setEnabled(false)
-                activatedBluetooth = false
-            }
-        case .calendar:
-            CalendarManager.shared.setEnabled(false)
-        case .weather:
-            WeatherManager.shared.setEnabled(false)
-        case .notifications:
-            NotificationManager.shared.setEnabled(false)
-        case .teleprompter:
-            TeleprompterManager.shared.setEnabled(false)
-        case .agent:
-            AgentManager.shared.setEnabled(false)
-        case .tools:
-            return ToolsManager.shared.setEnabled(false)
-        case .nowPlaying:
-            NowPlayingManager.shared.setEnabled(false)
-        case .battery:
-            BatteryManager.shared.setEnabled(false)
-        case .volumeHUD:
-            VolumeManager.shared.setEnabled(false)
-        case .shelf:
-            ShelfStore.shared.setEnabled(false)
+        let stopped = setEnabled(module, false)
+        if module == .connectivity && activatedBluetooth {
+            _ = updateManager(BluetoothManager.self, false)
+            activatedBluetooth = false
         }
-        return true
+        return stopped
+    }
+
+    private func setEnabled(_ module: ModuleType, _ enabled: Bool) -> Bool {
+        switch module {
+        case .nowPlaying: return updateManager(NowPlayingManager.self, enabled)
+        case .volumeHUD: return updateManager(VolumeManager.self, enabled)
+        case .battery: return updateManager(BatteryManager.self, enabled)
+        case .shelf: return updateManager(ShelfStore.self, enabled)
+        case .connectivity: return updateManager(WiFiManager.self, enabled)
+        case .calendar: return updateManager(CalendarManager.self, enabled)
+        case .weather: return updateManager(WeatherManager.self, enabled)
+        case .notifications: return updateManager(NotificationManager.self, enabled)
+        case .teleprompter: return updateManager(TeleprompterManager.self, enabled)
+        case .agent: return updateManager(AgentManager.self, enabled)
+        case .tools: return updateManager(ToolsManager.self, enabled)
+        }
     }
 }

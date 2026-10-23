@@ -25,6 +25,7 @@ final class AgentManager: ObservableObject {
     private var messageTasks: [AgentSessionID: Task<Void, Never>] = [:]
     private let sourceFactory: @MainActor () -> AgentStatusSource?
     private let handlerBundleIdentifier: @MainActor (URL) -> String?
+    private let applicationForURL: @MainActor (URL) -> URL?
     private let preferenceStore: UserDefaults?
     private var source: AgentStatusSource?
     private var store = AgentSessionStore()
@@ -33,10 +34,12 @@ final class AgentManager: ObservableObject {
     init(
         sourceFactory: @escaping @MainActor () -> AgentStatusSource? = { nil },
         handlerBundleIdentifier: @escaping @MainActor (URL) -> String? = { Bundle(url: $0)?.bundleIdentifier },
+        applicationForURL: @escaping @MainActor (URL) -> URL? = { NSWorkspace.shared.urlForApplication(toOpen: $0) },
         preferenceStore: UserDefaults? = nil
     ) {
         self.sourceFactory = sourceFactory
         self.handlerBundleIdentifier = handlerBundleIdentifier
+        self.applicationForURL = applicationForURL
         self.preferenceStore = preferenceStore
         codexEnabled = preferenceStore?.object(forKey: Self.codexEnabledKey) as? Bool ?? true
         codexHookFallbackEnabled = preferenceStore?.bool(forKey: Self.codexHookFallbackKey) ?? false
@@ -242,7 +245,7 @@ final class AgentManager: ObservableObject {
     func canOpenSession(_ sessionID: AgentSessionID) -> Bool {
         guard isEnabled, connection == .connected, store.sessions[sessionID] != nil,
               let url = navigationTargets[sessionID]?.url else { return false }
-        guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: url) else { return false }
+        guard let applicationURL = applicationForURL(url) else { return false }
         // Verified on the owner’s Mac: the current ChatGPT.app registers this
         // Codex bundle identifier. A different scheme handler is not trusted.
         return handlerBundleIdentifier(applicationURL) == "com.openai.codex"

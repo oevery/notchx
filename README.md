@@ -28,19 +28,19 @@ MediaRemoteAdapter 使用 macOS 私有媒体接口，已明确保留，但无法
 ## 开发与验证
 
 ```sh
-# 项目、本地化、源码与行为检查；macOS 上还运行原生 XCTest
+# macOS 完整检查：工程、本地化、发布工具与原生 XCTest
 bash scripts/test.sh
 
 # 只运行原生 XCTest，可继续传入 xcodebuild 测试参数
-bash scripts/test-native.sh
+bash scripts/test.sh --native-only
 
 # 构建双架构应用，校验辅助程序、资源与归档
-bash scripts/build-app.sh
+python3 scripts/release.py build
 ```
 
 应用位于 `build/NotchX.app`，带版本号的 ZIP、校验和及构建说明位于 `build/release/`。这些是固定自签、未经 Apple 公证的产物，不保证默认 Gatekeeper 放行或升级时所有权限自动保留。构建脚本不会安装或启动应用，不会修改系统信任与安全设置。
 
-增加或删除原生 Swift 文件后，运行 `python3 scripts/generate-xcode-project.py` 并检查工程差异。GitHub Actions 仅支持手动触发。非 macOS 检查不能替代 SDK 编译、原生测试或真机验收；详见 [开发与验证](docs/DEVELOPMENT.md) 和 [验收清单](docs/ACCEPTANCE.md)。
+增加或删除原生 Swift 文件后，运行 `python3 scripts/generate-xcode-project.py` 并检查工程差异。GitHub Actions 仅支持手动触发，统一使用 macOS；本地和 CI 共用完整检查入口。自动检查不能替代真机验收；详见 [开发与验证](docs/DEVELOPMENT.md) 和 [验收清单](docs/ACCEPTANCE.md)。
 
 ## 目录与文档
 

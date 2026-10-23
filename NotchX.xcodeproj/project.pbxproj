@@ -1056,6 +1056,16 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "C045BFB02D49F95C10F24B6A";
 		};
+		"6D76976D3177A90CF8C8EB0E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/Modules/Teleprompter/TeleprompterSpeechHardware.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"C284C9E255A6554A2168A8EC" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "6D76976D3177A90CF8C8EB0E";
+		};
 		"98259C3AB7635C8143C19F06" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -1683,6 +1693,7 @@
 				"01CDB7A116047997F8608B0E",
 				"6DA016995548275C9A745B45",
 				"C045BFB02D49F95C10F24B6A",
+				"6D76976D3177A90CF8C8EB0E",
 				"98259C3AB7635C8143C19F06",
 				"16D601B4EB43CE0753B03557",
 				"39CA3983DA4AEFA77D161D3D",
@@ -1845,6 +1856,7 @@
 				"9D8FF34FE9789E05766E6DC4",
 				"6936A7B37A6790FA6CCCB7D1",
 				"5B484746FC0C2F651EAE3458",
+				"C284C9E255A6554A2168A8EC",
 				"E316A5029EBA285D7E74BE9D",
 				"04579635FF845A8B1F786F1E",
 				"464E6032DE7770FF8931C350",
@@ -1940,6 +1952,16 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "1A42AB489F04D3A8D87B8A4E";
 		};
+		"194CA79E7591F397B340A434" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/AgentHostLifecycleTests.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"19BA51935CA8ABD172F479A0" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "194CA79E7591F397B340A434";
+		};
 		"4C41275C1E9668F6E4F72EAA" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -1959,6 +1981,16 @@
 		"E42CC6F3F61AF6F46CDAA61D" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = "16398D2463986CA404BA1E89";
+		};
+		"C7DC9819CC0DABAE252B8BF0" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/CalendarConcurrencyTests.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"840ADF6EB3F106EC37D17D48" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "C7DC9819CC0DABAE252B8BF0";
 		};
 		"C302E1D83262B20A7CB711E8" = {
 			"isa" = "PBXFileReference";
@@ -2210,6 +2242,16 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "560579CB1E5CACD2EA031840";
 		};
+		"D1D043A0246E1B9F110EE2CB" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/NativeModuleRegistryTests.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"4438D53528EA9E1315BC8003" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "D1D043A0246E1B9F110EE2CB";
+		};
 		"37BE8222714CACEFD4C76DED" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -2420,6 +2462,16 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "ADA12656F05ABA226F61D40D";
 		};
+		"5A53CE697229A1B4641F3DED" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/TeleprompterAudioLifecycleTests.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"02FA31655FB06239BA34443D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5A53CE697229A1B4641F3DED";
+		};
 		"20379A237BCADD51154C0F17" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -2478,8 +2530,10 @@
 				"3FE66BE966F2AD8C23302DD8",
 				"3FC60B9E2AB653F9DD5E604B",
 				"1A42AB489F04D3A8D87B8A4E",
+				"194CA79E7591F397B340A434",
 				"4C41275C1E9668F6E4F72EAA",
 				"16398D2463986CA404BA1E89",
+				"C7DC9819CC0DABAE252B8BF0",
 				"C302E1D83262B20A7CB711E8",
 				"EB93113A11CD9C1BFD5E5D27",
 				"803763DED756E27E4531C546",
@@ -2505,6 +2559,7 @@
 				"79CBFD75CF6BF377EB0E55C4",
 				"69B1EEB95939105F52C4922A",
 				"560579CB1E5CACD2EA031840",
+				"D1D043A0246E1B9F110EE2CB",
 				"37BE8222714CACEFD4C76DED",
 				"D6D32CBD1CD2BB570C8DEEE9",
 				"C5C0E0934FEEA2DD93688BEC",
@@ -2526,6 +2581,7 @@
 				"DC004ECE50AA041638C1AFD3",
 				"5DF13940987A735C1627C9BB",
 				"ADA12656F05ABA226F61D40D",
+				"5A53CE697229A1B4641F3DED",
 				"20379A237BCADD51154C0F17",
 				"1920E8AD7D649C85A9070427",
 				"6E9574E41009C6FADBD12AAB",
@@ -2542,8 +2598,10 @@
 				"CBC877DD5BF7A8765817B7C7",
 				"C90172F8F648910B1FB1C5BC",
 				"151917B007AA1107FF91EDC6",
+				"19BA51935CA8ABD172F479A0",
 				"42FB92B9C4C8A58E3FBD3EEA",
 				"E42CC6F3F61AF6F46CDAA61D",
+				"840ADF6EB3F106EC37D17D48",
 				"5B135738780E5FFA96AE5D94",
 				"A351CC752FC45295B96D9A96",
 				"1BC752A53C10989CA544A7C8",
@@ -2569,6 +2627,7 @@
 				"82A6617CBA56F5AB417F01DE",
 				"D231CF4223F25D2C72583C41",
 				"4421DEA515019E83FC7BC224",
+				"4438D53528EA9E1315BC8003",
 				"670163AF532D7DC118059AA9",
 				"CED1025C5DDB32E72BEB937A",
 				"C4398297ABFC3445C1D1C55F",
@@ -2590,6 +2649,7 @@
 				"E8C84E42EBE1825764C262F4",
 				"3DEB9C11DD043CBD0D270A11",
 				"0387E5DF0AB63147A917B66B",
+				"02FA31655FB06239BA34443D",
 				"BC253153D5928D78106AD027",
 				"2580D372A22441707FA4307F",
 				"9B5DB261A0DAA29B3CC45D53",
@@ -2600,14 +2660,14 @@
 		};
 		"62BF8DD3D86F9BDF01C03C63" = {
 			"isa" = "PBXShellScriptBuildPhase";
-			"name" = "Copy native resources (preserve media adapter)";
+			"name" = "Assemble native resources and agent bridge";
 			"buildActionMask" = "2147483647";
 			"files" = ();
 			"inputPaths" = ();
 			"outputPaths" = ();
 			"runOnlyForDeploymentPostprocessing" = "0";
 			"shellPath" = "/bin/bash";
-			"shellScript" = "set -euo pipefail\n/bin/bash \"${SRCROOT}/scripts/copy-native-resources.sh\"\n";
+			"shellScript" = "set -euo pipefail\n/bin/bash \"${SRCROOT}/scripts/build-native-components.sh\"\n";
 			"alwaysOutOfDate" = "1";
 		};
 		"B00CCDD09424E369308D67FA" = {

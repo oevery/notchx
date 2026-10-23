@@ -193,7 +193,31 @@ def framework_identifier(app):
     return value
 
 
+def verify_architectures(binary):
+    architectures = run(["lipo", "-archs", binary]).decode().split()
+    if not {"arm64", "x86_64"}.issubset(architectures):
+        raise ValueError(f"缺少双架构: {binary.name}")
+
+
+def verify_resources(app):
+    resources = app / "Contents/Resources"
+    for executable in [app / "Contents/MacOS/NotchX", app / "Contents/Helpers/NotchXAgentBridge",
+                       resources / "MediaRemoteAdapter/mediaremote-adapter.pl",
+                       framework(app) / "Versions/A/MediaRemoteAdapter"]:
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise ValueError(f"应用可执行资源缺失或不可执行: {executable.relative_to(app)}")
+    for link in [framework(app) / "Versions/Current", framework(app) / "MediaRemoteAdapter"]:
+        if not link.is_symlink() or not link.exists():
+            raise ValueError(f"媒体框架链接缺失或失效: {link.relative_to(app)}")
+    if not (resources / "AppIcon.icns").is_file():
+        raise ValueError("缺少应用图标")
+    for path in resources.rglob("*"):
+        if path.name in {"node_modules", "BundledExtensions"} or path.suffix in {".mjs", ".cjs"}:
+            raise ValueError(f"应用包含禁止的扩展资源: {path.relative_to(app)}")
+
+
 def verify_bundle(app, meta):
+    verify_resources(app)
     with (app / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
     expected = {"CFBundleIdentifier": APP_ID, "CFBundleShortVersionString": meta["version"],
@@ -204,20 +228,15 @@ def verify_bundle(app, meta):
             raise ValueError(f"应用元信息与唯一配置不一致: {key}")
     helper = app / "Contents/Helpers/NotchXAgentBridge"
     for binary in [app / "Contents/MacOS/NotchX", helper, framework(app) / "Versions/A/MediaRemoteAdapter"]:
-        architectures = run(["lipo", "-archs", binary]).decode().split()
-        if not {"arm64", "x86_64"}.issubset(architectures):
-            raise ValueError(f"缺少双架构: {binary.name}")
+        verify_architectures(binary)
     verify_signature(framework(app), framework_identifier(app), deep=True)
     verify_signature(helper, HELPER_ID)
     verify_signature(app, APP_ID, deep=True)
-    resource_checks = subprocess.run(["bash", "scripts/smoke-macos.sh", "--verify-resources-only"],
-                                    cwd=ROOT, env={**{key: value for key, value in os.environ.items()
-                                                     if key not in SECRET_ENVIRONMENT}, "APP_PATH": str(app)})
-    if resource_checks.returncode:
-        raise RuntimeError("应用资源检查失败")
 
 
 def build(directory):
+    if os.environ.get("CONFIGURATION", "Release") != "Release":
+        raise ValueError("发布打包只支持 Release；调试与测试请使用 Xcode 或 test.sh --native-only")
     meta = metadata()
     fingerprint = certificate_fingerprint()
     run(["openssl", "x509", "-inform", "DER", "-in", CERTIFICATE, "-checkend", "2592000", "-noout"])
@@ -277,8 +296,7 @@ def main():
         meta = metadata()
         print(json.dumps({**meta, "artifact": artifact_name(meta)}))
         return
-    if sys.platform != "darwin":
-        raise ValueError("签名、应用验证与发布构建需要 macOS")
+    run(["bash", ROOT / "scripts/require-macos.sh"], capture=False)
     if args.command == "init-identity":
         initialize_identity(args.identity_directory)
     elif args.command == "build":

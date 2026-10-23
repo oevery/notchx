@@ -1,9 +1,27 @@
 #!/bin/bash
-# Xcode resource phase: a small native helper, with no additional app host.
+# Xcode 构建阶段：组装资源与原生辅助程序，保留框架链接和权限。
 set -euo pipefail
-: "${SRCROOT:?}"
+: "${SRCROOT:?Run from Xcode or python3 scripts/release.py build}"
 : "${TARGET_BUILD_DIR:?}"
 : "${TARGET_TEMP_DIR:?}"
+: "${UNLOCALIZED_RESOURCES_FOLDER_PATH:?}"
+resources="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+[[ "$resources" == */NotchX.app/Contents/Resources ]] || {
+  echo "Unexpected native app resource destination: $resources" >&2; exit 1;
+}
+# Remove only this target's generated resource directory so deleted native assets
+# cannot linger across incremental builds.
+rm -rf -- "$resources"
+mkdir -p "$resources"
+/usr/bin/ditto "$SRCROOT/App/Resources" "$resources"
+# The adapter is loaded at runtime, not linked as a public framework.
+# Keep its original signed payload and executable permissions intact.
+test -x "$resources/MediaRemoteAdapter/mediaremote-adapter.pl"
+test -x "$resources/MediaRemoteAdapter/MediaRemoteAdapter.framework/Versions/A/MediaRemoteAdapter"
+test -L "$resources/MediaRemoteAdapter/MediaRemoteAdapter.framework/Versions/Current"
+cp "$SRCROOT/THIRD_PARTY_NOTICES.md" "$resources/THIRD_PARTY_NOTICES.md"
+
+/usr/bin/ditto "$SRCROOT/Licenses" "$resources/Licenses"
 destination="$TARGET_BUILD_DIR/NotchX.app/Contents/Helpers"
 mkdir -p "$destination"
 sdk=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)

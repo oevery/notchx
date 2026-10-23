@@ -12,22 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  source-checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    container: swift:6.2.3
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Install source-check dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends python3 openssl
-      - name: Validate source, metadata and signing failure paths
-        run: bash scripts/test.sh
-
   release:
-    needs: source-checks
     if: github.ref == 'refs/heads/main' && github.repository == 'oevery/notchx'
     runs-on: macos-26
     timeout-minutes: 45
@@ -44,13 +29,13 @@ jobs:
         run: |
           python3 scripts/release.py metadata > "$RUNNER_TEMP/notchx-metadata.json"
           jq -r '"artifact=" + .artifact' "$RUNNER_TEMP/notchx-metadata.json" >> "$GITHUB_OUTPUT"
-      - name: Test native app without signing credentials
-        run: bash scripts/test-native.sh -quiet -resultBundlePath build/release-tests.xcresult
+      - name: Validate project, localization, release tooling and native XCTest without signing credentials
+        run: bash scripts/test.sh -quiet -resultBundlePath build/release-tests.xcresult
       - name: Build, sign with the fixed identity and verify the extracted archive
         env:
           NOTCHX_SIGNING_P12_BASE64: ${{ secrets.NOTCHX_SIGNING_P12_BASE64 }}
           NOTCHX_SIGNING_P12_PASSWORD: ${{ secrets.NOTCHX_SIGNING_P12_PASSWORD }}
-        run: bash scripts/build-app.sh
+        run: python3 scripts/release.py build
       - name: Save verified self-signed artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -8,7 +8,12 @@ private extension Int {
 }
 
 // Only value snapshots leave the service; EventKit objects and predicates stay isolated.
-private actor CalendarEventService {
+protocol CalendarEventServing: Sendable {
+    func calendars() async -> [CalendarDisplayOption]
+    func events(start: Date, end: Date) async -> [CalendarEventSnapshot]
+}
+
+private actor CalendarEventService: CalendarEventServing {
     private lazy var store = EKEventStore()
 
     func calendars() -> [CalendarDisplayOption] {
@@ -76,7 +81,7 @@ final class CalendarManager: ObservableObject {
         return nextEventCountdown
     }
     @Published var hasAccess: Bool = false
-    @Published var authorizationStatus: EKAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
+    @Published var authorizationStatus: EKAuthorizationStatus
     @Published var displayedMonthStart: Date = startOfMonth(for: Date()) {
         didSet { prefetchDatesWithEventsIfNeeded() }
     }
@@ -84,26 +89,31 @@ final class CalendarManager: ObservableObject {
     @Published var selectedDateEvents: [CalendarEventSnapshot] = []
     @Published var upcomingWeekEvents: [(date: Date, events: [CalendarEventSnapshot])] = []
     @Published var calendarSourceGroups: [CalendarSourceGroup] = []
-    @Published var hideBirthdays: Bool = SettingsDefaults.Calendar.hideBirthdays.read() {
+    @Published var hideBirthdays: Bool {
         didSet {
-            UserDefaults.standard.set(hideBirthdays, forKey: SettingsDefaults.Calendar.hideBirthdays.key)
+            preferences.set(hideBirthdays, forKey: SettingsDefaults.Calendar.hideBirthdays.key)
             refreshEventsAfterPreferenceChange()
         }
     }
-    @Published var hideHolidays: Bool = SettingsDefaults.Calendar.hideHolidays.read() {
+    @Published var hideHolidays: Bool {
         didSet {
-            UserDefaults.standard.set(hideHolidays, forKey: SettingsDefaults.Calendar.hideHolidays.key)
+            preferences.set(hideHolidays, forKey: SettingsDefaults.Calendar.hideHolidays.key)
             refreshEventsAfterPreferenceChange()
         }
     }
-    @Published var collapseDuplicates: Bool = SettingsDefaults.Calendar.collapseDuplicates.read() {
+    @Published var collapseDuplicates: Bool {
         didSet {
-            UserDefaults.standard.set(collapseDuplicates, forKey: SettingsDefaults.Calendar.collapseDuplicates.key)
+            preferences.set(collapseDuplicates, forKey: SettingsDefaults.Calendar.collapseDuplicates.key)
             refreshEventsAfterPreferenceChange()
         }
     }
 
-    private let service = CalendarEventService()
+    private let service: any CalendarEventServing
+    private let preferences: UserDefaults
+    private let authorization: () -> EKAuthorizationStatus
+    private let injectedScheduler: ModuleRefreshScheduler?
+    private var scheduler: ModuleRefreshScheduler { injectedScheduler ?? .shared }
+    private let notifications: NotificationCenter
     private var refreshToken: ModuleRefreshToken?
     private var clockRefreshToken: ModuleRefreshToken?
     private var snoozeTask: Task<Void, Never>?
@@ -120,33 +130,43 @@ final class CalendarManager: ObservableObject {
     @Published var datesWithEvents: Set<Date> = []
 
     var preEventMinutes: Int {
-        get { UserDefaults.standard.integer(forKey: SettingsDefaults.Calendar.preEventMinutes.key).nonZero ?? SettingsDefaults.Calendar.preEventMinutes.value }
+        get { preferences.integer(forKey: SettingsDefaults.Calendar.preEventMinutes.key).nonZero ?? SettingsDefaults.Calendar.preEventMinutes.value }
         set {
-            UserDefaults.standard.set(max(1, min(60, newValue)), forKey: SettingsDefaults.Calendar.preEventMinutes.key)
+            preferences.set(max(1, min(60, newValue)), forKey: SettingsDefaults.Calendar.preEventMinutes.key)
             schedulePreEventNotification()
         }
     }
 
     var lookaheadDays: Int {
-        get { UserDefaults.standard.integer(forKey: SettingsDefaults.Calendar.lookaheadDays.key).nonZero ?? SettingsDefaults.Calendar.lookaheadDays.value }
+        get { preferences.integer(forKey: SettingsDefaults.Calendar.lookaheadDays.key).nonZero ?? SettingsDefaults.Calendar.lookaheadDays.value }
         set {
-            UserDefaults.standard.set(max(1, min(30, newValue)), forKey: SettingsDefaults.Calendar.lookaheadDays.key)
+            preferences.set(max(1, min(30, newValue)), forKey: SettingsDefaults.Calendar.lookaheadDays.key)
             fetchUpcomingWeekEvents()
         }
     }
 
-    private init() {
+    init(service: (any CalendarEventServing)? = nil, preferences: UserDefaults = .standard,
+         authorization: @escaping () -> EKAuthorizationStatus = { EKEventStore.authorizationStatus(for: .event) },
+         scheduler: ModuleRefreshScheduler? = nil, notifications: NotificationCenter = .default) {
+        self.service = service ?? CalendarEventService()
+        self.preferences = preferences
+        self.authorization = authorization
+        self.injectedScheduler = scheduler
+        self.notifications = notifications
+        hideBirthdays = SettingsDefaults.Calendar.hideBirthdays.read(from: preferences)
+        hideHolidays = SettingsDefaults.Calendar.hideHolidays.read(from: preferences)
+        collapseDuplicates = SettingsDefaults.Calendar.collapseDuplicates.read(from: preferences)
         // Constructing an inactive module (for example from Settings) is inert.
         // Activation owns fetches, subscriptions and host presentation changes.
-        authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        authorizationStatus = authorization()
         hasAccess = Self.isAuthorized(authorizationStatus)
     }
 
     /// Re-read only display preferences; refresh helpers remain gated on existing access/enablement.
     func reloadRestoredPreferences() {
-        hideBirthdays = SettingsDefaults.Calendar.hideBirthdays.read()
-        hideHolidays = SettingsDefaults.Calendar.hideHolidays.read()
-        collapseDuplicates = SettingsDefaults.Calendar.collapseDuplicates.read()
+        hideBirthdays = SettingsDefaults.Calendar.hideBirthdays.read(from: preferences)
+        hideHolidays = SettingsDefaults.Calendar.hideHolidays.read(from: preferences)
+        collapseDuplicates = SettingsDefaults.Calendar.collapseDuplicates.read(from: preferences)
         refreshEventsAfterPreferenceChange()
     }
 
@@ -169,7 +189,7 @@ final class CalendarManager: ObservableObject {
         // Invalidate pending fetches when authorization changes, including revocation.
         requestGeneration = UUID()
         cancelFetches()
-        authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        authorizationStatus = authorization()
         hasAccess = Self.isAuthorized(authorizationStatus)
         if hasAccess && isEnabled {
             reloadCalendars()
@@ -204,11 +224,11 @@ final class CalendarManager: ObservableObject {
     // MARK: - Calendar Sources
 
     var hasCustomCalendarSelection: Bool {
-        UserDefaults.standard.object(forKey: enabledCalendarIDsKey) != nil
+        preferences.object(forKey: enabledCalendarIDsKey) != nil
     }
 
     var enabledCalendarIDs: Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: enabledCalendarIDsKey) ?? [])
+        Set(preferences.stringArray(forKey: enabledCalendarIDsKey) ?? [])
     }
 
     func isCalendarEnabled(_ calendarID: String) -> Bool {
@@ -224,7 +244,7 @@ final class CalendarManager: ObservableObject {
             selectedIDs.remove(calendarID)
         }
 
-        UserDefaults.standard.set(allCalendarIDs.filter { selectedIDs.contains($0) }, forKey: enabledCalendarIDsKey)
+        preferences.set(allCalendarIDs.filter { selectedIDs.contains($0) }, forKey: enabledCalendarIDsKey)
         refreshEventsAfterPreferenceChange()
     }
 
@@ -361,7 +381,7 @@ final class CalendarManager: ObservableObject {
     private func registerRefresh() {
         guard isEnabled, refreshToken == nil else { return }
 
-        refreshToken = ModuleRefreshScheduler.shared.register(
+        refreshToken = scheduler.register(
             id: "calendar.refresh",
             name: "Calendar fallback refresh",
             module: .builtIn(.calendar),
@@ -370,7 +390,7 @@ final class CalendarManager: ObservableObject {
         ) { [weak self] in
             self?.fetchTodayEvents()
         }
-        clockRefreshToken = ModuleRefreshScheduler.shared.register(
+        clockRefreshToken = scheduler.register(
             id: "calendar.clock", name: "Visible calendar countdown", module: .builtIn(.calendar),
             policy: .visibleOnly(30, tolerance: 2), enabled: { [weak self] in self?.isEnabled == true && self?.hasAccess == true }
         ) { [weak self] in self?.updateClock() }
@@ -380,14 +400,14 @@ final class CalendarManager: ObservableObject {
         guard !isObservingStoreChanges else { return }
         isObservingStoreChanges = true
 
-        NotificationCenter.default.addObserver(
+        notifications.addObserver(
             self,
             selector: #selector(dayChanged),
             name: .NSCalendarDayChanged,
             object: nil
         )
 
-        NotificationCenter.default.addObserver(
+        notifications.addObserver(
             self,
             selector: #selector(eventStoreChanged),
             name: .EKEventStoreChanged,
@@ -398,13 +418,13 @@ final class CalendarManager: ObservableObject {
     private func stopRefresh() {
         preEventTask?.cancel()
         preEventTask = nil
-        ModuleRefreshScheduler.shared.unregister(refreshToken)
+        scheduler.unregister(refreshToken)
         refreshToken = nil
-        ModuleRefreshScheduler.shared.unregister(clockRefreshToken)
+        scheduler.unregister(clockRefreshToken)
         clockRefreshToken = nil
         ignoreReminder()
-        NotificationCenter.default.removeObserver(self, name: .NSCalendarDayChanged, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .EKEventStoreChanged, object: nil)
+        notifications.removeObserver(self, name: .NSCalendarDayChanged, object: nil)
+        notifications.removeObserver(self, name: .EKEventStoreChanged, object: nil)
         isObservingStoreChanges = false
     }
 
@@ -602,11 +622,12 @@ final class CalendarManager: ObservableObject {
         let clockToken = clockRefreshToken
         fetchTasks.values.forEach { $0.cancel() }
         let token = refreshToken
+        let scheduler = injectedScheduler
         Task { @MainActor in
-            ModuleRefreshScheduler.shared.unregister(token)
-            ModuleRefreshScheduler.shared.unregister(clockToken)
+            (scheduler ?? .shared).unregister(token)
+            (scheduler ?? .shared).unregister(clockToken)
         }
         preEventTask?.cancel()
-        NotificationCenter.default.removeObserver(self)
+        notifications.removeObserver(self)
     }
 }

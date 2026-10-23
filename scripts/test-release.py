@@ -125,6 +125,17 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn(release.certificate_fingerprint(), requirement)
             self.assertIn("--deep", command)
 
+    def test_release_architecture_verification_rejects_thin_and_substring_matches(self):
+        binary = Path("NotchX")
+        for output in [b"arm64 x86_64", b"x86_64 arm64", b"  arm64\tx86_64\n"]:
+            with self.subTest(output=output), patch.object(release, "run", return_value=output) as execute:
+                release.verify_architectures(binary)
+                execute.assert_called_once_with(["lipo", "-archs", binary])
+        for output in [b"arm64", b"x86_64", b"", b"arm64e x86_64", b"arm64 x86_64h"]:
+            with self.subTest(output=output), patch.object(release, "run", return_value=output):
+                with self.assertRaises(ValueError):
+                    release.verify_architectures(binary)
+
     def test_identity_generation_exports_real_p12_and_refuses_to_replace_existing_identity(self):
         public = self.directory / "public/NotchX.cer"
         private = self.directory / "private"
@@ -139,6 +150,119 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.initialize_identity(private)
             self.assertEqual(public.read_bytes(), original)
+
+    def bundle_fixture(self, name):
+        app = self.directory / name
+        resources = app / "Contents/Resources"
+        executables = [app / "Contents/MacOS/NotchX", app / "Contents/Helpers/NotchXAgentBridge",
+                       resources / "MediaRemoteAdapter/mediaremote-adapter.pl",
+                       release.framework(app) / "Versions/A/MediaRemoteAdapter"]
+        for path in executables:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture, never executed")
+            path.chmod(0o755)
+        (release.framework(app) / "Versions/Current").symlink_to("A")
+        (release.framework(app) / "MediaRemoteAdapter").symlink_to("Versions/Current/MediaRemoteAdapter")
+        (resources / "AppIcon.icns").write_bytes(b"fixture")
+        return app, executables
+
+    def test_resource_validation_is_read_only_and_rejects_missing_or_nonexecutable_payloads(self):
+        app, executables = self.bundle_fixture("valid.app")
+        with patch.object(release, "run") as execute:
+            release.verify_resources(app)
+            execute.assert_not_called()
+        for path in [*executables, app / "Contents/Resources/AppIcon.icns"]:
+            with self.subTest(missing=path.name):
+                contents, mode = path.read_bytes(), path.stat().st_mode
+                path.unlink()
+                with self.assertRaises(ValueError):
+                    release.verify_resources(app)
+                path.write_bytes(contents)
+                path.chmod(mode)
+        for path in executables:
+            with self.subTest(nonexecutable=path.name):
+                path.chmod(0o644)
+                with self.assertRaises(ValueError):
+                    release.verify_resources(app)
+                path.chmod(0o755)
+
+    def test_resource_validation_rejects_broken_framework_links_and_extension_payloads(self):
+        for index, relative in enumerate(["Versions/Current", "MediaRemoteAdapter"]):
+            app, _ = self.bundle_fixture(f"link-{index}.app")
+            link = release.framework(app) / relative
+            link.unlink()
+            link.symlink_to("missing")
+            with self.subTest(link=relative), self.assertRaises(ValueError):
+                release.verify_resources(app)
+        for index, name in enumerate(["node_modules", "BundledExtensions", "example.mjs", "example.cjs"]):
+            app, _ = self.bundle_fixture(f"extension-{index}.app")
+            (app / "Contents/Resources" / name).touch()
+            with self.subTest(payload=name), self.assertRaises(ValueError):
+                release.verify_resources(app)
+
+    def test_cli_preflight_failure_stops_before_any_signing_or_verification(self):
+        for command, operation in [("build", "build"), ("verify", "verify_bundle"), ("init-identity", "initialize_identity")]:
+            with self.subTest(command=command), patch.object(release.sys, "argv", ["release.py", command]), \
+                 patch.object(release, "run", side_effect=RuntimeError("preflight failed")) as execute, \
+                 patch.object(release, operation) as action:
+                with self.assertRaisesRegex(RuntimeError, "preflight failed"):
+                    release.main()
+                execute.assert_called_once_with(["bash", release.ROOT / "scripts/require-macos.sh"], capture=False)
+                action.assert_not_called()
+        with patch.dict(os.environ, {"CONFIGURATION": "Debug"}), patch.object(release, "signing_keychain") as signing:
+            with self.assertRaises(ValueError):
+                release.build(self.directory)
+            signing.assert_not_called()
+
+    def tool_environment(self):
+        binary = self.directory / "bin"
+        binary.mkdir()
+        log = self.directory / "commands.log"
+        stubs = {
+            "uname": 'printf "%s\\n" "${FIXTURE_OS:-Darwin}"',
+            "sw_vers": 'printf "%s\\n" "${FIXTURE_MACOS:-26.0}"',
+            "xcrun": 'printf "%s\\n" "${FIXTURE_SDK:-26.0}"',
+            "xcodebuild": '''if [[ "$1" == -version ]]; then
+  printf '%s\\n' preflight >> "$FIXTURE_LOG"
+  printf 'Xcode %s\\nBuild version fixture\\n' "${FIXTURE_XCODE:-26.0}"
+  exit 0
+fi
+printf '%s\\n' xcodebuild "$@" >> "$FIXTURE_LOG"
+exit "${FIXTURE_NATIVE_EXIT:-0}"''',
+            "python3": '''printf '%s\\n' "$*" >> "$FIXTURE_LOG"
+exit "${FIXTURE_PYTHON_EXIT:-0}"''',
+        }
+        for name, source in stubs.items():
+            path = binary / name
+            path.write_text("#!/bin/bash\n" + source + "\n")
+            path.chmod(0o755)
+        return {**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"], "FIXTURE_LOG": str(log)}, log
+
+    def test_shared_preflight_rejects_unsupported_os_xcode_and_sdk(self):
+        environment, _ = self.tool_environment()
+        for variables in [{}, {"FIXTURE_OS": "Linux"}, {"FIXTURE_MACOS": "15.0"},
+                          {"FIXTURE_XCODE": "16.4"}, {"FIXTURE_SDK": "15.5"}, {"FIXTURE_XCODE": "invalid"}]:
+            with self.subTest(variables=variables):
+                result = subprocess.run(["/bin/bash", str(release.ROOT / "scripts/require-macos.sh")],
+                                        env={**environment, **variables}, capture_output=True)
+                self.assertEqual(result.returncode == 0, not variables)
+
+    def test_complete_and_native_only_entry_preserve_arguments_and_failure_status(self):
+        environment, log = self.tool_environment()
+        for native_only, python_exit, native_exit in [(False, 0, 0), (True, 0, 0), (False, 0, 37), (True, 0, 37), (False, 41, 0)]:
+            with self.subTest(native_only=native_only, python_exit=python_exit, native_exit=native_exit):
+                log.write_text("")
+                arguments = (["--native-only"] if native_only else []) + ["-only-testing:NotchXTests/CalendarConcurrencyTests", "-resultBundlePath", "path with spaces.xcresult"]
+                result = subprocess.run(["/bin/bash", str(release.ROOT / "scripts/test.sh"), *arguments],
+                    env={**environment, "FIXTURE_PYTHON_EXIT": str(python_exit), "FIXTURE_NATIVE_EXIT": str(native_exit)}, capture_output=True)
+                self.assertEqual(result.returncode, python_exit or native_exit)
+                commands = log.read_text().splitlines()
+                self.assertEqual(commands.count("preflight"), 1)
+                self.assertEqual("scripts/test-release.py" in commands, not native_only and not python_exit)
+                self.assertEqual("xcodebuild" in commands, not python_exit)
+                if not python_exit:
+                    self.assertEqual(commands[-3:], arguments[-3:])
+                    self.assertNotIn("--native-only", commands)
 
 
 if __name__ == "__main__":
