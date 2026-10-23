@@ -28,7 +28,7 @@ test -x "$BUILT_PRODUCTS_DIR/NotchXAgentBridge"
 /usr/bin/ditto "$BUILT_PRODUCTS_DIR/NotchXAgentBridge" "$destination/NotchXAgentBridge"
 chmod 755 "$destination/NotchXAgentBridge"
 
-# This is nested code in Contents/Helpers. Sign the final universal executable
+# This is nested code in Contents/Helpers. Sign the final target executable
 # before Xcode signs the containing app. Keep unsigned developer builds unsigned.
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == YES ]]; then
   identity="${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}"

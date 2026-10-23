@@ -13,7 +13,8 @@
 ```sh
 bash scripts/test.sh --full -resultBundlePath build/pre-release.xcresult
 python3 scripts/release.py build
-python3 scripts/release.py verify
+python3 scripts/release.py verify --arch arm64
+python3 scripts/release.py verify --arch x86_64
 ```
 
 固定身份已在首次配置时创建，默认私密目录为 `~/.local/share/notchx/signing/`，不在仓库内：
@@ -26,19 +27,21 @@ python3 scripts/release.py verify
 
 `python3 scripts/release.py init-identity` **仅用于首次创建身份**，现有证书或目录存在时拒绝覆盖。其他机器和 CI 恢复同一份 P12，不重新生成。丢失私钥、证书轮换或以后切换 Developer ID 都需要重新验收授权保留。
 
-可用 `python3 scripts/release.py build --identity-directory /安全的仓库外目录` 指定凭据位置。Xcode 普通 Run 和原生测试继续使用隔离的开发构建，不读取发布私钥；权限升级验收使用固定签名后的 `build/NotchX.app`。
+可用 `python3 scripts/release.py build --identity-directory /安全的仓库外目录` 指定凭据位置。`build` 默认依次生成两份 DMG，也可使用 `--arch arm64` 或 `--arch x86_64` 单独构建。Xcode 普通 Run 和原生测试继续使用隔离的开发构建，不读取发布私钥；权限升级验收使用对应架构的 `build/arm64/NotchX.app` 或 `build/x86_64/NotchX.app`。
 
-打包只支持 Release：编译前检查固定证书与私钥配对，再编译一个最小探针并使用相同身份签名、严格验签；探针不执行。自签证书不要求成为系统信任身份，不能仅用 `find-identity -v` 的数量判定是否可签名。探针失败立即停止，不进入应用构建。通过后构建双架构，再由内到外签署媒体框架、桥接程序和主应用。
+打包只支持 Release：编译前检查固定证书与私钥配对，再编译一个最小探针并使用相同身份签名、严格验签；探针不执行。自签证书不要求成为系统信任身份，不能仅用 `find-identity -v` 的数量判定是否可签名。探针失败立即停止，不进入应用构建。通过后按目标架构编译应用与桥接程序，在构建副本中裁剪媒体框架，再由内到外签署框架、桥接程序和主应用。三者均须恰好包含目标架构。
 
 仅修改构建副本，不修改源目录中的第三方框架。构建子进程不继承签名 Secrets；临时钥匙串在成功和失败时均清理。仅在 GitHub Actions runner 上，将临时钥匙串临时加入用户搜索列表，并在结束时恢复原列表；本地不修改搜索列表。两端都不安装信任根、不修改默认钥匙串或 Gatekeeper、不移除隔离标记，不安装或启动应用。
 
-产物位于 `build/release/`：版本化的 `NotchX-0.1.0-1-universal-selfsigned.zip`、同名 `.zip.sha256` 与 `.json`。JSON 记录版本、作者、证书指纹、架构、源码提交及脏工作区标记，明确标记未公证。ZIP 解压后再次验证资源、架构、版本和签名，全部通过才输出产物。旧的 `NotchX-developer-universal.zip` 不再更新，不用于本次发布。
+产物位于 `build/release/`：`NotchX-0.1.0-1-arm64.dmg`（Apple Silicon）和 `NotchX-0.1.0-1-x86_64.dmg`（Intel），各附 `.dmg.sha256` 与 `.json`。JSON 记录版本、作者、证书指纹、目标架构、源码提交及脏工作区标记，明确标记未公证。DMG 包含应用与 `/Applications` 安装链接；创建后校验镜像、只读挂载且禁止自动打开窗口，再验证资源、许可证、架构、版本和签名，成功或验证失败均卸载。可用 `python3 scripts/release.py verify --arch arm64 --dmg build/release/NotchX-0.1.0-1-arm64.dmg` 复验。旧 Universal／ZIP 不再生成或上传；DMG 不改变自签、公证和 Gatekeeper 限制。
 
 ## 手动 Release CI 与 Secrets
 
-`.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。单个 `macos-26` 任务先运行 `scripts/test.sh --checks-only`（工程、资源、本地化、版本快速检查），通过后才读取签名凭据，构建 Release、签名、打包并验证解压产物；所有步骤绑定同一次触发的精确提交。不运行 XCTest 或完整测试工具自测，也不分流到 Linux。
+CI 通过任务级 `DEVELOPER_DIR` 固定镜像中已验证的稳定版 Xcode 26.6，不改变本机配置；镜像移除该版本时应明确升级并重新验证，不静默切换到预览版。
 
-CI 编译缓存仅允许 `build/DerivedData/ModuleCache.noindex`、`SDKStatCaches.noindex` 和 `Build/Intermediates.noindex`，不缓存 `Build/Products`、`build/NotchX.app`、`build/release`、私钥目录或临时钥匙串。缓存键包含 runner 系统／架构、macOS build、Xcode build、SDK build、Release 双架构标记和构建输入摘要；仅在同一工具链前缀内回退恢复。恢复后仍由 Xcode 判断需要重编译的内容，不承诺与本地热增量完全相同。缓存仅在成功运行后保存，首次没有缓存属于正常情况。
+`.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。`arm64`／`x86_64` 两项矩阵均使用 `macos-26`，分别运行 `scripts/test.sh --checks-only`（工程、资源、本地化、版本快速检查），通过后才读取签名凭据，构建 Release、签名、打包并验证挂载产物；所有步骤绑定同一次触发的精确提交。一项失败不取消另一项，以保留诊断。不运行 XCTest 或完整测试工具自测，也不分流到 Linux。交叉编译及验签不等于 Intel 真机运行验收。Actions 使用最新已验证稳定版并固定完整 SHA；升级须检查兼容性，不追踪浮动 main。日志记录 Xcode／SDK／Swift 版本，不引入 Beta 工具链。
+
+CI 编译缓存仅允许 `build/DerivedData-<架构>/` 下的 `ModuleCache.noindex`、`SDKStatCaches.noindex` 和 `Build/Intermediates.noindex`，不缓存 `Build/Products`、签名应用、`build/release`、私钥目录或临时钥匙串。缓存键包含 runner 系统／架构、macOS build、Xcode build、SDK build、Release 目标架构和构建输入摘要；仅在相同工具链、相同目标架构前缀内回退恢复。恢复后仍由 Xcode 判断需要重编译的内容，不承诺与本地热增量完全相同。缓存仅在成功运行后保存，首次没有缓存属于正常情况。
 
 测试由本地负责：发布前对准备触发 CI 的同一个干净提交运行不带筛选参数的 `--full`（Core 加工具自测），保留提交 SHA 与 `.xcresult`；若代码变化，重新验证受影响内容及发布前核心测试。窗口和焦点回归须另行显式运行 `--ui`，视觉和真实权限按人工验收清单执行，分别记录已验证／未验证。CI 不自动证明本地测试已通过，核心通过不等于 UI 或真机验收完成，打包成功也不是完整测试通过；首次构建耗时仍须独立观察。
 
@@ -58,7 +61,7 @@ base64 < "$HOME/.local/share/notchx/signing/identity.p12" | gh secret set NOTCHX
 gh secret set NOTCHX_SIGNING_P12_PASSWORD --repo oevery/notchx --env release-signing < "$HOME/.local/share/notchx/signing/signing.password"
 ```
 
-CI 缺少 Secrets、凭据不完整或指纹不符都会失败，绝不降级为 ad-hoc 或无签名包。工作流仅有读取仓库权限，只上传 ZIP、校验和及 JSON；**不创建标签、GitHub Release，不推送提交，不执行公证**。Release 指发布准备流程，不表示已经公开发布。
+CI 缺少 Secrets、凭据不完整或指纹不符都会失败，绝不降级为 ad-hoc 或无签名包。工作流仅有读取仓库权限。每份 DMG 用 `upload-artifact` 的 `archive: false` 单独上传，直接下载而不套 ZIP；校验和及 JSON 放在独立的 `-verification` 资料包中，保留 14 天。**不创建标签、GitHub Release，不推送提交，不执行公证**。Release 指发布准备流程，不表示已经公开发布。
 
 ## 分发与权限限制
 

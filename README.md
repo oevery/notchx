@@ -37,11 +37,11 @@ bash scripts/test.sh --full -resultBundlePath build/pre-release.xcresult
 # 显式桌面 UI 回归：会打开窗口、切换焦点，请单独安排
 bash scripts/test.sh --ui -resultBundlePath build/desktop-ui.xcresult
 
-# 构建双架构应用，校验辅助程序、资源与归档
+# 构建 arm64 和 x86_64 两份 DMG，校验辅助程序、资源与签名
 python3 scripts/release.py build
 ```
 
-应用位于 `build/NotchX.app`，带版本号的 ZIP、校验和及构建说明位于 `build/release/`。这些是固定自签、未经 Apple 公证的产物，不保证默认 Gatekeeper 放行或升级时所有权限自动保留。构建脚本不会安装或启动应用，不会修改系统信任与安全设置。
+应用分别位于 `build/arm64/NotchX.app` 和 `build/x86_64/NotchX.app`，带版本号与架构的 DMG、校验和及构建说明位于 `build/release/`。Apple Silicon 选择 arm64，Intel 选择 x86_64；DMG 中将应用拖入 Applications 即可安装。这些是固定自签、未经 Apple 公证的产物，不保证默认 Gatekeeper 放行或升级时所有权限自动保留。构建脚本不会安装或启动应用，不会修改系统信任与安全设置。
 
 增加或删除原生 Swift 文件后，运行 `python3 scripts/generate-xcode-project.py` 并检查工程差异。测试分组在 `TestPlans/Groups.json` 维护；默认 Core，DesktopUI 仅显式运行。GitHub Actions 仅手动执行快速检查、签名打包和产物验证，不运行 XCTest。发布前分别确认同一提交的核心自动测试、涉及的 UI 回归和人工验收；核心通过不代表桌面 UI 已验证。详见 [开发与验证](docs/DEVELOPMENT.md) 和 [验收清单](docs/ACCEPTANCE.md)。
 

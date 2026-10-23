@@ -41,7 +41,7 @@ Xcode 共享计划为 Core 和 DesktopUI，默认选中 Core。Core 保留协议
 - `check-native-project.py`：在隔离目录生成后比对，检查唯一宿主、测试隔离、系统版本与媒体资源。
 - `check-localization.py`：检查本地化键与格式契约；不检查文档语言。
 - `test.sh`：默认 `--core`；`--full` 核心测试加工具自测；`--ui` 显式桌面回归；`--checks-only` 仅运行 CI 快速检查；兼容 `--native-only` 核心定向测试。所有模式执行一次环境预检，不读取发布凭据；测试筛选校验通过后才调用 Xcode。
-- `release.py`：统一读取版本信息，`build` 构建固定自签双架构应用及 ZIP，`verify` 只读校验身份、元信息、资源与架构，不启动应用；见 [发布准备](RELEASE.md)。
+- `release.py`：统一读取版本信息，`build` 构建固定自签的 arm64／x86_64 两份 DMG；`--arch` 可指定单一架构，`verify --arch` 只读校验身份、元信息、资源与架构，`--dmg` 可复验镜像，不启动应用；见 [发布准备](RELEASE.md)。
 - `test-release.py`：验证环境预检、测试入口参数与失败传播、版本契约、实际发布路径的架构／资源拒绝分支、真实 P12 导出、私钥路径／权限、CI 缺少凭据时拒绝降级及临时钥匙串失败清理。
 - `build-native-components.sh`：仅供 Xcode 构建阶段调用，组装资源、许可证及已构建的 Agent 辅助程序，保留嵌套代码签名顺序。资源仍每次重新组装，防止删除的资源残留；不再在脚本里调用 Swift 编译器。
 - `require-macos.sh`：测试与发布命令共用的只读环境预检，统一要求 macOS、Xcode 和 SDK 均为 26 或更新版本；不自动安装工具或切换 Xcode。
@@ -55,7 +55,7 @@ Xcode 共享计划为 Core 和 DesktopUI，默认选中 Core。Core 保留协议
 
 设置布局矩阵保留全部语言和宽度；管理操作只在每种语言的窄宽度上重复，宽宽度仍检查布局。等待以页面身份、控件出现和状态变化为条件；动画轨迹与真实超时测试保留必要的时间采样。错误推送测试通过真实 socket 的有序推送、ACK 和 EOF 结束，不为每个错误字段重复等待完整超时；独立无推送场景仍验证真实超时。截图仅在 `NOTCHX_CAPTURE_TEST_IMAGES=1` 时写入 `build/verification/compact-polish/`，并不是图片基准比较。
 
-Agent 辅助程序由 `NotchXAgentBridge` 命令行目标构建，是应用的原生依赖，不是第二个宿主。Xcode 跟踪其源码、SDK、架构与编译选项，Debug 使用 `-Onone` 且只编译当前机器架构，Release 使用 `-O`。Core/DesktopUI 共用 `build/NativeTests`，不要在普通切换时清空构建缓存；发布仍独立构建双架构并验证最终嵌套签名。
+Agent 辅助程序由 `NotchXAgentBridge` 命令行目标构建，是应用的原生依赖，不是第二个宿主。Xcode 跟踪其源码、SDK、架构与编译选项，Debug 使用 `-Onone` 且只编译当前机器架构，Release 使用 `-O`。Core/DesktopUI 共用 `build/NativeTests`，不要在普通切换时清空构建缓存；发布按 arm64／x86_64 分别构建并验证最终嵌套签名。
 
 关键覆盖按职责保留：
 

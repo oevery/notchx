@@ -29,7 +29,10 @@ class ReleaseTests(unittest.TestCase):
         text = re.sub(r"^MARKETING_VERSION = .+$", "MARKETING_VERSION = 2.3.4", original, flags=re.M)
         path.write_text(re.sub(r"^CURRENT_PROJECT_VERSION = .+$", "CURRENT_PROJECT_VERSION = 27", text, flags=re.M))
         metadata = release.metadata(path)
-        self.assertEqual(release.artifact_name(metadata), "NotchX-2.3.4-27-universal-selfsigned")
+        for arch in release.ARCHITECTURES:
+            self.assertEqual(release.artifact_name(metadata, arch), f"NotchX-2.3.4-27-{arch}")
+        with self.assertRaises(ValueError):
+            release.artifact_name(metadata, "../invalid")
         with (release.ROOT / "App/Info.plist").open("rb") as stream:
             info = plistlib.load(stream)
         self.assertEqual(info["CFBundleShortVersionString"], "$(MARKETING_VERSION)")
@@ -51,6 +54,15 @@ class ReleaseTests(unittest.TestCase):
                 path.write_text(text)
                 with self.assertRaises(ValueError):
                     release.metadata(path)
+
+    def test_cli_build_selects_both_or_exact_requested_architecture(self):
+        for selected in [None, *release.ARCHITECTURES]:
+            arguments = ["release.py", "build"] + (["--arch", selected] if selected else [])
+            with (self.subTest(arch=selected), patch.object(release.sys, "argv", arguments),
+                  patch.object(release, "run", return_value=b""), patch.object(release, "build") as build):
+                release.main()
+                self.assertEqual([call.args[1] for call in build.call_args_list],
+                                 [selected] if selected else list(release.ARCHITECTURES))
 
     def test_private_material_in_repository_or_with_unsafe_permissions_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -192,16 +204,37 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn(release.certificate_fingerprint(), requirement)
             self.assertIn("--deep", command)
 
-    def test_release_architecture_verification_rejects_thin_and_substring_matches(self):
+    def test_release_architecture_verification_requires_exact_target_slice(self):
         binary = Path("NotchX")
-        for output in [b"arm64 x86_64", b"x86_64 arm64", b"  arm64\tx86_64\n"]:
-            with self.subTest(output=output), patch.object(release, "run", return_value=output) as execute:
-                release.verify_architectures(binary)
-                execute.assert_called_once_with(["lipo", "-archs", binary])
-        for output in [b"arm64", b"x86_64", b"", b"arm64e x86_64", b"arm64 x86_64h"]:
-            with self.subTest(output=output), patch.object(release, "run", return_value=output):
-                with self.assertRaises(ValueError):
-                    release.verify_architectures(binary)
+        for arch in release.ARCHITECTURES:
+            for output in [b"arm64", b"x86_64", b"arm64 x86_64", b"", b"arm64e", b"x86_64h"]:
+                with self.subTest(arch=arch, output=output), patch.object(release, "run", return_value=output):
+                    if output.decode() == arch:
+                        release.verify_architectures(binary, arch)
+                    else:
+                        with self.assertRaises(ValueError):
+                            release.verify_architectures(binary, arch)
+
+    def test_dmg_verification_detaches_even_if_bundle_or_install_link_is_invalid(self):
+        for failure in [None, "bundle", "link"]:
+            commands = []
+            def execute(arguments, **kwargs):
+                commands.append(arguments)
+                if arguments[:2] == ["hdiutil", "attach"]:
+                    mount = arguments[-1]
+                    mount.mkdir()
+                    (mount / "Applications").symlink_to("/invalid" if failure == "link" else "/Applications")
+                return b""
+            with (self.subTest(failure=failure), patch.object(release, "run", side_effect=execute),
+                  patch.object(release, "verify_bundle", side_effect=ValueError("invalid") if failure == "bundle" else None) as verify):
+                if failure:
+                    with self.assertRaises(ValueError):
+                        release.verify_dmg(Path("fixture.dmg"), {}, "arm64")
+                else:
+                    release.verify_dmg(Path("fixture.dmg"), {}, "arm64")
+                    self.assertEqual(verify.call_args.args[1:], ({}, "arm64"))
+                self.assertEqual(commands[-1][:2], ["hdiutil", "detach"])
+                self.assertTrue(all(flag in commands[1] for flag in ["-readonly", "-nobrowse", "-noautoopen"]))
 
     def test_identity_generation_exports_real_p12_and_refuses_to_replace_existing_identity(self):
         public = self.directory / "public/NotchX.cer"
@@ -231,6 +264,11 @@ class ReleaseTests(unittest.TestCase):
         (release.framework(app) / "Versions/Current").symlink_to("A")
         (release.framework(app) / "MediaRemoteAdapter").symlink_to("Versions/Current/MediaRemoteAdapter")
         (resources / "AppIcon.icns").write_bytes(b"fixture")
+        for source in [release.ROOT / "THIRD_PARTY_NOTICES.md", *(release.ROOT / "Licenses").rglob("*")]:
+            if source.is_file():
+                target = resources / source.relative_to(release.ROOT)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
         return app, executables
 
     def test_resource_validation_is_read_only_and_rejects_missing_or_nonexecutable_payloads(self):
@@ -238,7 +276,8 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release, "run") as execute:
             release.verify_resources(app)
             execute.assert_not_called()
-        for path in [*executables, app / "Contents/Resources/AppIcon.icns"]:
+        for path in [*executables, app / "Contents/Resources/AppIcon.icns",
+                     app / "Contents/Resources/THIRD_PARTY_NOTICES.md"]:
             with self.subTest(missing=path.name):
                 contents, mode = path.read_bytes(), path.stat().st_mode
                 path.unlink()

@@ -61,8 +61,13 @@ def metadata(path=None):
             "author": author, "copyright": values["NOTCHX_COPYRIGHT"], "bundle_id": APP_ID}
 
 
-def artifact_name(meta):
-    return f"NotchX-{meta['version']}-{meta['build']}-universal-selfsigned"
+ARCHITECTURES = ("arm64", "x86_64")
+
+
+def artifact_name(meta, arch):
+    if arch not in ARCHITECTURES:
+        raise ValueError("不支持的发布架构")
+    return f"NotchX-{meta['version']}-{meta['build']}-{arch}"
 
 
 def require_external(path):
@@ -222,10 +227,10 @@ def framework_identifier(app):
     return value
 
 
-def verify_architectures(binary):
+def verify_architectures(binary, arch):
     architectures = run(["lipo", "-archs", binary]).decode().split()
-    if not {"arm64", "x86_64"}.issubset(architectures):
-        raise ValueError(f"缺少双架构: {binary.name}")
+    if arch not in ARCHITECTURES or architectures != [arch]:
+        raise ValueError(f"架构必须恰为 {arch}: {binary.name}，实际 {architectures}")
 
 
 def verify_resources(app):
@@ -240,12 +245,17 @@ def verify_resources(app):
             raise ValueError(f"媒体框架链接缺失或失效: {link.relative_to(app)}")
     if not (resources / "AppIcon.icns").is_file():
         raise ValueError("缺少应用图标")
+    for source in [ROOT / "THIRD_PARTY_NOTICES.md", *(ROOT / "Licenses").rglob("*")]:
+        if source.is_file():
+            bundled = resources / source.relative_to(ROOT)
+            if not bundled.is_file() or bundled.read_bytes() != source.read_bytes():
+                raise ValueError(f"第三方许可缺失或不一致: {source.name}")
     for path in resources.rglob("*"):
         if path.name in {"node_modules", "BundledExtensions"} or path.suffix in {".mjs", ".cjs"}:
             raise ValueError(f"应用包含禁止的扩展资源: {path.relative_to(app)}")
 
 
-def verify_bundle(app, meta):
+def verify_bundle(app, meta, arch):
     verify_resources(app)
     with (app / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
@@ -257,58 +267,82 @@ def verify_bundle(app, meta):
             raise ValueError(f"应用元信息与唯一配置不一致: {key}")
     helper = app / "Contents/Helpers/NotchXAgentBridge"
     for binary in [app / "Contents/MacOS/NotchX", helper, framework(app) / "Versions/A/MediaRemoteAdapter"]:
-        verify_architectures(binary)
+        verify_architectures(binary, arch)
     verify_signature(framework(app), framework_identifier(app), deep=True)
     verify_signature(helper, HELPER_ID)
     verify_signature(app, APP_ID, deep=True)
 
 
-def build(directory):
+def verify_dmg(archive, meta, arch):
+    run(["hdiutil", "verify", archive])
+    with tempfile.TemporaryDirectory(prefix="notchx-mount-") as temporary:
+        mount = Path(temporary) / "volume"
+        run(["hdiutil", "attach", archive, "-readonly", "-nobrowse", "-noautoopen",
+             "-mountpoint", mount])
+        try:
+            link = mount / "Applications"
+            if not link.is_symlink() or os.readlink(link) != "/Applications":
+                raise ValueError("DMG 缺少 Applications 安装链接")
+            verify_bundle(mount / "NotchX.app", meta, arch)
+        finally:
+            run(["hdiutil", "detach", mount])
+
+
+def build(directory, arch="arm64"):
     if os.environ.get("CONFIGURATION", "Release") != "Release":
         raise ValueError("发布打包只支持 Release；调试与测试请使用 Xcode 或 test.sh --native-only")
     meta = metadata()
+    name = artifact_name(meta, arch)
+    derived = ROOT / "build" / f"DerivedData-{arch}"
     run(["openssl", "x509", "-inform", "DER", "-in", CERTIFICATE, "-checkend", "2592000", "-noout"])
     # 编译前验证完整身份及实际签名能力，不把“已导入证书”当成可签名。
     with signing_keychain(directory) as keychain:
         check_signing_identity(keychain)
         run(["python3", "scripts/check-native-project.py"], capture=False)
         run(["xcodebuild", "-project", "NotchX.xcodeproj", "-scheme", "NotchX",
-             "-configuration", "Release", "-derivedDataPath", ROOT / "build/DerivedData",
-             "-destination", "generic/platform=macOS", "ARCHS=arm64 x86_64", "ONLY_ACTIVE_ARCH=NO",
+             "-configuration", "Release", "-derivedDataPath", derived,
+             "-destination", "generic/platform=macOS", f"ARCHS={arch}", "ONLY_ACTIVE_ARCH=NO",
              "CODE_SIGNING_ALLOWED=NO", "build"], capture=False)
-        app = ROOT / "build/NotchX.app"
+        app = ROOT / "build" / arch / "NotchX.app"
+        app.parent.mkdir(parents=True, exist_ok=True)
         if app.is_symlink():
             raise ValueError("拒绝覆盖符号链接应用路径")
         if app.exists():
             shutil.rmtree(app)
-        run(["/usr/bin/ditto", ROOT / "build/DerivedData/Build/Products/Release/NotchX.app", app])
+        run(["/usr/bin/ditto", derived / "Build/Products/Release/NotchX.app", app])
+        binary = framework(app) / "Versions/A/MediaRemoteAdapter"
+        available = run(["lipo", "-archs", binary]).decode().split()
+        if available != [arch]:
+            run(["lipo", binary, "-thin", arch, "-output", binary])
         # 由内到外签名；不使用 --deep 重签，不修改源目录中的第三方框架。
         sign(framework(app), framework_identifier(app), keychain)
         sign(app / "Contents/Helpers/NotchXAgentBridge", HELPER_ID, keychain)
         sign(app, APP_ID, keychain, entitlements=ROOT / "App/NotchX.entitlements")
-        verify_bundle(app, meta)
+        verify_bundle(app, meta, arch)
     output = ROOT / "build/release"
     output.mkdir(exist_ok=True)
-    name = artifact_name(meta)
     with tempfile.TemporaryDirectory(prefix="notchx-package-", dir=ROOT / "build") as temporary:
         temporary = Path(temporary)
-        archive = temporary / f"{name}.zip"
-        run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, archive])
-        extracted = temporary / "extracted"
-        run(["/usr/bin/ditto", "-x", "-k", archive, extracted])
-        verify_bundle(extracted / "NotchX.app", meta)
+        archive = temporary / f"{name}.dmg"
+        staging = temporary / "staging"
+        staging.mkdir()
+        run(["/usr/bin/ditto", app, staging / "NotchX.app"])
+        (staging / "Applications").symlink_to("/Applications")
+        run(["hdiutil", "create", "-volname", f"NotchX {meta['version']} ({arch})",
+             "-srcfolder", staging, "-format", "UDZO", archive])
+        verify_dmg(archive, meta, arch)
         checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
         shutil.move(str(archive), output / archive.name)
-        (output / f"{name}.zip.sha256").write_text(f"{checksum}  {name}.zip\n")
+        (output / f"{name}.dmg.sha256").write_text(f"{checksum}  {name}.dmg\n")
     report = {**meta, "signing": "fixed-self-signed", "notarized": False, "hardened_runtime": False,
               "certificate_sha256": hashlib.sha256(CERTIFICATE.read_bytes()).hexdigest(),
-              "certificate_sha1": certificate_fingerprint(), "architectures": ["arm64", "x86_64"],
-              "archive": f"{name}.zip", "sha256": checksum,
+              "certificate_sha1": certificate_fingerprint(), "architectures": [arch],
+              "archive": f"{name}.dmg", "sha256": checksum,
               "source_commit": run(["git", "rev-parse", "HEAD"]).decode().strip(),
               "source_dirty": bool(run(["git", "status", "--porcelain"])),
               "notice": "固定自签，未经 Apple 公证；Gatekeeper 与实际权限升级行为仍需人工验收。"}
     (output / f"{name}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-    print(f"已生成并验签: {output / (name + '.zip')}")
+    print(f"已生成并验签: {output / (name + '.dmg')}")
     print("仅本地打包：没有安装、启动、系统信任变更、公证、标签或发布。")
 
 
@@ -316,20 +350,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["metadata", "init-identity", "build", "verify"])
     parser.add_argument("--identity-directory", type=Path, default=PRIVATE_DIRECTORY)
-    parser.add_argument("--app", type=Path, default=ROOT / "build/NotchX.app")
+    parser.add_argument("--arch", choices=ARCHITECTURES, help="目标架构；build 不指定时依次构建两份 DMG")
+    parser.add_argument("--app", type=Path)
+    parser.add_argument("--dmg", type=Path)
     args = parser.parse_args()
     if args.command == "metadata":
         meta = metadata()
-        print(json.dumps({**meta, "artifact": artifact_name(meta)}))
+        print(json.dumps({**meta, **({"artifact": artifact_name(meta, args.arch)} if args.arch else {})}))
         return
     run(["bash", ROOT / "scripts/require-macos.sh"], capture=False)
     if args.command == "init-identity":
         initialize_identity(args.identity_directory)
     elif args.command == "build":
-        build(args.identity_directory)
+        for arch in ([args.arch] if args.arch else ARCHITECTURES):
+            build(args.identity_directory, arch)
     else:
-        verify_bundle(args.app.resolve(), metadata())
-        print("应用元信息、双架构、资源和固定签名身份验证通过")
+        if not args.arch or (args.app and args.dmg):
+            parser.error("verify 必须指定 --arch，且 --app 与 --dmg 不能同时使用")
+        if args.dmg:
+            verify_dmg(args.dmg.resolve(), metadata(), args.arch)
+        else:
+            verify_bundle((args.app or ROOT / "build" / args.arch / "NotchX.app").resolve(), metadata(), args.arch)
+        print("应用元信息、目标架构、资源和固定签名身份验证通过")
 
 
 if __name__ == "__main__":

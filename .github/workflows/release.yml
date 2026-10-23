@@ -13,12 +13,19 @@ concurrency:
 
 jobs:
   release:
+    name: Package ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
     if: github.ref == 'refs/heads/main' && github.repository == 'oevery/notchx'
     runs-on: macos-26
     timeout-minutes: 45
     environment: release-signing
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -27,7 +34,7 @@ jobs:
       - name: Read the single version configuration
         id: metadata
         run: |
-          python3 scripts/release.py metadata > "$RUNNER_TEMP/notchx-metadata.json"
+          python3 scripts/release.py metadata --arch ${{ matrix.arch }} > "$RUNNER_TEMP/notchx-metadata.json"
           jq -r '"artifact=" + .artifact' "$RUNNER_TEMP/notchx-metadata.json" >> "$GITHUB_OUTPUT"
       - name: Check project, localization and metadata without signing credentials
         run: bash scripts/test.sh --checks-only
@@ -37,35 +44,46 @@ jobs:
           toolchain_key=$({ sw_vers -buildVersion; xcodebuild -version; xcrun --sdk macosx --show-sdk-build-version; } | shasum -a 256 | cut -d ' ' -f 1)
           echo "key=$toolchain_key" >> "$GITHUB_OUTPUT"
       - name: Restore and save compiler intermediates only
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # No Build/Products, signed application, release archives, or signing directory.
           path: |
-            build/DerivedData/ModuleCache.noindex
-            build/DerivedData/SDKStatCaches.noindex
-            build/DerivedData/Build/Intermediates.noindex
-          key: notchx-compiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-release-universal-${{ hashFiles('App/**', 'Helpers/**', 'Config/*.xcconfig', 'NotchX.xcodeproj/project.pbxproj', 'scripts/build-native-components.sh') }}
+            build/DerivedData-${{ matrix.arch }}/ModuleCache.noindex
+            build/DerivedData-${{ matrix.arch }}/SDKStatCaches.noindex
+            build/DerivedData-${{ matrix.arch }}/Build/Intermediates.noindex
+          key: notchx-compiler-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-release-${{ matrix.arch }}-${{ hashFiles('App/**', 'Helpers/**', 'Config/*.xcconfig', 'NotchX.xcodeproj/project.pbxproj', 'scripts/build-native-components.sh', 'scripts/release.py') }}
           restore-keys: |
-            notchx-compiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-release-universal-
-      - name: Probe fixed signing identity, build and verify the extracted archive
+            notchx-compiler-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-release-${{ matrix.arch }}-
+      - name: Probe fixed signing identity, build and verify the mounted DMG
         env:
           NOTCHX_SIGNING_P12_BASE64: ${{ secrets.NOTCHX_SIGNING_P12_BASE64 }}
           NOTCHX_SIGNING_P12_PASSWORD: ${{ secrets.NOTCHX_SIGNING_P12_PASSWORD }}
-        run: python3 scripts/release.py build
-      - name: Save verified self-signed artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        run: python3 scripts/release.py build --arch ${{ matrix.arch }}
+      - name: Downloadable DMG without ZIP wrapper
+        id: dmg
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ steps.metadata.outputs.artifact }}
+          path: build/release/${{ steps.metadata.outputs.artifact }}.dmg
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save verification metadata
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.metadata.outputs.artifact }}-verification
           path: |
-            build/release/${{ steps.metadata.outputs.artifact }}.zip
-            build/release/${{ steps.metadata.outputs.artifact }}.zip.sha256
+            build/release/${{ steps.metadata.outputs.artifact }}.dmg.sha256
             build/release/${{ steps.metadata.outputs.artifact }}.json
           if-no-files-found: error
           retention-days: 14
       - name: Summarize distribution limits
+        env:
+          DMG_URL: ${{ steps.dmg.outputs.artifact-url }}
+          ARTIFACT: ${{ steps.metadata.outputs.artifact }}
         run: |
           {
             echo '### NotchX Release preparation'
+            echo "下载：[$ARTIFACT.dmg]($DMG_URL)"
             echo '固定自签，未经 Apple 公证；不是 Developer ID 分发包。'
             echo '本次仅上传产物，不创建标签或 GitHub Release。'
             echo 'CI 不运行 XCTest；发布前对相同提交完成核心测试，并分别确认所需 UI 回归与人工验收。'
