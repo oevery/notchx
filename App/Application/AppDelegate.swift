@@ -20,6 +20,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        // Core tests use the real host without permitting it to activate or show
+        // windows. Desktop interaction is a separate, explicitly selected plan.
+        if isUnitTestHost && ProcessInfo.processInfo.environment["NOTCHX_DESKTOP_UI"] != "1" {
+            NSApp.setActivationPolicy(.prohibited)
+        }
+        #endif
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isUnitTestHost else { return }
         installQuitHotkeyMonitor()

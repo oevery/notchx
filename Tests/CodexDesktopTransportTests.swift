@@ -124,6 +124,14 @@ private final class DesktopSocketFixture: @unchecked Sendable {
                 let frame = try CodexDesktopWire.frame(response)
                 try AgentUnixSocket.write(Data(frame.prefix(2)), to: client, until: deadline)
                 try AgentUnixSocket.write(Data(frame.dropFirst(2)), to: client, until: deadline)
+                if method == "thread-follower-set-queued-follow-ups-state", let queuePush,
+                   [.wrongOwner, .wrongThread, .wrongID, .wrongVersion, .wrongHost].contains(queuePush) {
+                    // The invalid push precedes a valid ACK on the same stream, so
+                    // the real parser must consume it before delivery is decided.
+                    // EOF now means no further proof, instead of five identical
+                    // one-second waits. The no-push case still tests the real timeout.
+                    return
+                }
                 if method == "thread-follower-set-queued-follow-ups-state", queuePush == .afterACK,
                    let entries = (request["params"] as? [String: Any])?["state"] as? [String: [[String: Any]]] {
                     try AgentUnixSocket.write(CodexDesktopWire.frame(["type": "broadcast", "method": "thread-queued-followups-changed",

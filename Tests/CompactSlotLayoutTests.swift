@@ -137,6 +137,8 @@ final class CompactSlotLayoutTests: XCTestCase {
     }
 
     private func capture(_ view: NSView, name: String) throws {
+        // Geometry assertions always run; PNGs are optional visual-review output.
+        guard ProcessInfo.processInfo.environment["NOTCHX_CAPTURE_TEST_IMAGES"] == "1" else { return }
         view.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)

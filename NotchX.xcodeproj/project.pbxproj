@@ -23,6 +23,7 @@
 			"children" = (
 				"681C948D238C526E9E3424E0",
 				"F739566ED5280322FF98A798",
+				"D7B61112ADFD2D44AA9EEB60",
 			);
 			"sourceTree" = "<group>";
 		};
@@ -2142,6 +2143,16 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "0045C0DD2F467931D802EFE6";
 		};
+		"E9C2B2AFA83940E072F08C9E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/CoreExecutionPolicyTests.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"6B59F87EE341473624CBC529" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "E9C2B2AFA83940E072F08C9E";
+		};
 		"5693B218B618BF9008072624" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -2549,6 +2560,7 @@
 				"F6D5EAF96AFC010193DF2D66",
 				"62235FEF7ED192AECBF4CE38",
 				"0045C0DD2F467931D802EFE6",
+				"E9C2B2AFA83940E072F08C9E",
 				"5693B218B618BF9008072624",
 				"EDFA9BC2CEC5B81BA9B3FDE3",
 				"BDC7BC1E9ACED62BC8BEDC08",
@@ -2617,6 +2629,7 @@
 				"0B4684A97848D71C7AFAAAA9",
 				"FADAA590917D33F68B5EC167",
 				"1A6B12B2497999E6A9F16B91",
+				"6B59F87EE341473624CBC529",
 				"5DEDA8070BF89292CE43450B",
 				"08CFDDD3F31DC5FE1331F079",
 				"663548C52F949DAF67248E06",
@@ -2658,12 +2671,133 @@
 			);
 			"runOnlyForDeploymentPostprocessing" = "0";
 		};
+		"D7B61112ADFD2D44AA9EEB60" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "compiled.mach-o.executable";
+			"path" = "NotchXAgentBridge";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"5A5FC78A9722B263C3D195ED" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Helpers/NotchXAgentBridge/main.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"F6D4F576B54440C8CAF47A5F" = {
+			"isa" = "PBXGroup";
+			"name" = "Helpers";
+			"children" = (
+				"5A5FC78A9722B263C3D195ED",
+			);
+			"sourceTree" = "<group>";
+		};
+		"AECBF0FB5079D5C6EE407DB3" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5A5FC78A9722B263C3D195ED";
+		};
+		"5FABD4672D7FEA0B86B1F3E8" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "6A2D59346C7585EDFE0E5FF5";
+		};
+		"C1DF5C36C289F91944F8D07F" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8401183C6C37AC9A7525F2D9";
+		};
+		"DF866C0A699F4108FEC40800" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "508A0823EC4EBF3C5839312E";
+		};
+		"789C8B243A1080A0A4971343" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = (
+				"AECBF0FB5079D5C6EE407DB3",
+				"5FABD4672D7FEA0B86B1F3E8",
+				"C1DF5C36C289F91944F8D07F",
+				"DF866C0A699F4108FEC40800",
+			);
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"BDFD4597519099F6A0970D19" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "5.0";
+				"MACOSX_DEPLOYMENT_TARGET" = "26.0";
+				"SDKROOT" = "macosx";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+				"ENABLE_TESTABILITY" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
+				"PRODUCT_NAME" = "NotchXAgentBridge";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "app.notchx.agent-bridge";
+				"SKIP_INSTALL" = "YES";
+			};
+		};
+		"10EFED72F8D773E3546A610A" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "5.0";
+				"MACOSX_DEPLOYMENT_TARGET" = "26.0";
+				"SDKROOT" = "macosx";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
+				"ENABLE_TESTABILITY" = "NO";
+				"ONLY_ACTIVE_ARCH" = "NO";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
+				"PRODUCT_NAME" = "NotchXAgentBridge";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "app.notchx.agent-bridge";
+				"SKIP_INSTALL" = "YES";
+			};
+		};
+		"0AC8AC0FF88EF1971E1586B5" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = (
+				"BDFD4597519099F6A0970D19",
+				"10EFED72F8D773E3546A610A",
+			);
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Debug";
+		};
+		"BF5585DB99B3652823128692" = {
+			"isa" = "PBXNativeTarget";
+			"name" = "NotchXAgentBridge";
+			"productName" = "NotchXAgentBridge";
+			"productReference" = "D7B61112ADFD2D44AA9EEB60";
+			"productType" = "com.apple.product-type.tool";
+			"buildConfigurationList" = "0AC8AC0FF88EF1971E1586B5";
+			"buildPhases" = (
+				"789C8B243A1080A0A4971343",
+			);
+			"buildRules" = ();
+			"dependencies" = ();
+		};
+		"803932F7A97FAA234D9EF5B9" = {
+			"isa" = "PBXContainerItemProxy";
+			"containerPortal" = "244210E48437B6556980A702";
+			"proxyType" = "1";
+			"remoteGlobalIDString" = "BF5585DB99B3652823128692";
+			"remoteInfo" = "NotchXAgentBridge";
+		};
+		"2A962064405B6F61C4FF9616" = {
+			"isa" = "PBXTargetDependency";
+			"target" = "BF5585DB99B3652823128692";
+			"targetProxy" = "803932F7A97FAA234D9EF5B9";
+		};
 		"62BF8DD3D86F9BDF01C03C63" = {
 			"isa" = "PBXShellScriptBuildPhase";
 			"name" = "Assemble native resources and agent bridge";
 			"buildActionMask" = "2147483647";
 			"files" = ();
-			"inputPaths" = ();
+			"inputPaths" = (
+				"$(BUILT_PRODUCTS_DIR)/NotchXAgentBridge",
+			);
 			"outputPaths" = ();
 			"runOnlyForDeploymentPostprocessing" = "0";
 			"shellPath" = "/bin/bash";
@@ -2681,6 +2815,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
 				"ENABLE_TESTABILITY" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "app.notchx";
@@ -2702,6 +2837,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
 				"ENABLE_TESTABILITY" = "NO";
+				"ONLY_ACTIVE_ARCH" = "NO";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "app.notchx";
@@ -2733,7 +2869,9 @@
 				"62BF8DD3D86F9BDF01C03C63",
 			);
 			"buildRules" = ();
-			"dependencies" = ();
+			"dependencies" = (
+				"2A962064405B6F61C4FF9616",
+			);
 		};
 		"DAB01D73CBBCF1FEDE84E2D6" = {
 			"isa" = "PBXContainerItemProxy";
@@ -2758,6 +2896,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
 				"ENABLE_TESTABILITY" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "app.notchx.native-tests";
@@ -2779,6 +2918,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
 				"ENABLE_TESTABILITY" = "NO";
+				"ONLY_ACTIVE_ARCH" = "NO";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "app.notchx.native-tests";
@@ -2839,6 +2979,7 @@
 			"children" = (
 				"13C4608B5138EBE9B3A45A55",
 				"6DC4FAD667A85B8567F612FB",
+				"F6D4F576B54440C8CAF47A5F",
 				"EBDEBD4F6B17E681B3845974",
 				"0A3E27B8CA818264D75C8D81",
 			);
@@ -2855,6 +2996,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
 				"ENABLE_TESTABILITY" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
 			};
@@ -2871,6 +3013,7 @@
 				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
 				"ENABLE_TESTABILITY" = "NO";
+				"ONLY_ACTIVE_ARCH" = "NO";
 				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
 				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
 			};
@@ -2907,6 +3050,7 @@
 			"targets" = (
 				"C1E9827DB735CA9BAA54A540",
 				"9805CBD60EB4F66728D5D195",
+				"BF5585DB99B3652823128692",
 			);
 		};
 	};

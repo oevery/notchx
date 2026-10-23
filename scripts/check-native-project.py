@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import shutil
 import re
+import json
 import sys
 import xml.etree.ElementTree as ET
 
@@ -13,7 +14,33 @@ GENERATED_PROJECT_PATHS = [
     'NotchX.xcodeproj/project.pbxproj',
     'NotchX.xcodeproj/xcshareddata/xcschemes/NotchX.xcscheme',
     'NotchX.xcodeproj/project.xcworkspace/contents.xcworkspacedata',
+    'TestPlans/Core.xctestplan',
+    'TestPlans/DesktopUI.xctestplan',
 ]
+
+def validate_test_selection(root, name, arguments):
+    if name not in ['Core', 'DesktopUI']:
+        raise ValueError('Unknown test plan')
+    groups = {plan: set(json.loads((root/f'TestPlans/{plan}.xctestplan').read_text())['testTargets'][0]['selectedTests'])
+              for plan in ['Core', 'DesktopUI']}
+    forbidden = {'-testPlan', '-xctestrun', '-project', '-workspace', '-scheme', '-target', '-configuration'}
+    for argument in arguments:
+        if argument.split('=')[0] in forbidden or argument.startswith(('NOTCHX_DESKTOP_UI=', 'NOTCHX_UNIT_TEST_HOST=')):
+            raise ValueError(f'Test entry cannot override the host or plan: {argument}')
+        if argument.startswith('-only-testing:'):
+            selector = argument.split(':', 1)[1].removesuffix('()')
+            prefix = 'NotchXTests/'
+            if not selector.startswith(prefix):
+                raise ValueError('Select a suite or method inside NotchXTests')
+            selector = selector[len(prefix):]
+            def matches(value):
+                value = value.removesuffix('()')
+                return value == selector or value.startswith(selector+'/')
+            if not any(matches(test) for test in groups[name]):
+                raise ValueError(f'No {name} test matches {argument}; desktop tests require --ui')
+            other = 'DesktopUI' if name == 'Core' else 'Core'
+            if any(matches(test) for test in groups[other]):
+                raise ValueError(f'Mixed suite: select individual {name} methods instead of overriding the plan')
 
 
 def stale_generated_project_paths(root):
@@ -21,12 +48,14 @@ def stale_generated_project_paths(root):
     with tempfile.TemporaryDirectory(prefix='notchx-project-check-') as temp:
         target = Path(temp)
         (target/'scripts').mkdir()
+        (target/'TestPlans').mkdir()
+        shutil.copy2(root/'TestPlans/Groups.json', target/'TestPlans/Groups.json')
         shutil.copy2(root/'scripts/generate-xcode-project.py', target/'scripts/generate-xcode-project.py')
         for folder in ['App', 'Tests']:
             for source in (root/folder).rglob('*.swift'):
                 dest = target/source.relative_to(root)
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.touch()
+                shutil.copy2(source, dest)
         subprocess.run([sys.executable, str(target/'scripts/generate-xcode-project.py')], check=True, stdout=subprocess.DEVNULL)
         return [path for path in GENERATED_PROJECT_PATHS
                 if not (root/path).exists() or (root/path).read_bytes() != (target/path).read_bytes()]
@@ -114,6 +143,11 @@ def self_test():
             for folder in ['App', 'Tests']:
                 (self.root/folder).mkdir()
                 (self.root/folder/'Example.swift').touch()
+            (self.root/'Tests/Example.swift').write_text('final class ExampleTests: XCTestCase {\n    func testCore() {}\n    @MainActor func testWindow() {}\n}\n')
+            (self.root/'TestPlans').mkdir()
+            (self.root/'TestPlans/Groups.json').write_text(json.dumps({
+                'coreSuites': [], 'desktopUISuites': [],
+                'mixedSuites': {'ExampleTests': ['testCore']}}))
             self.workspace = self.root/GENERATED_PROJECT_PATHS[2]
 
         def generate(self):
@@ -185,6 +219,48 @@ def self_test():
             self.assertEqual(stale_generated_project_paths(self.root), [GENERATED_PROJECT_PATHS[2]])
             self.assertEqual(self.workspace.read_text(), 'changed workspace')
 
+        def test_test_plans_partition_methods_and_require_explicit_desktop_opt_in(self):
+            self.generate()
+            selections = {}
+            for name, allowed in [('Core', '0'), ('DesktopUI', '1')]:
+                plan = json.loads((self.root/f'TestPlans/{name}.xctestplan').read_text())
+                selections[name] = plan['testTargets'][0]['selectedTests']
+                flags = {v['key']: v['value'] for v in plan['defaultOptions']['environmentVariableEntries']}
+                self.assertEqual(flags['NOTCHX_UNIT_TEST_HOST'], '1')
+                self.assertEqual(flags['NOTCHX_DESKTOP_UI'], allowed)
+                self.assertNotIn('skippedTests', plan['testTargets'][0])
+            self.assertEqual(selections, {'Core': ['ExampleTests/testCore()'], 'DesktopUI': ['ExampleTests/testWindow()']})
+            source = self.root/'Tests/Example.swift'
+            source.write_text(source.read_text().replace('    func testCore()', '    func testNewWindow() {}\n    func testCore()'))
+            self.generate()
+            plan = json.loads((self.root/'TestPlans/DesktopUI.xctestplan').read_text())
+            self.assertIn('ExampleTests/testNewWindow()', plan['testTargets'][0]['selectedTests'])
+
+        def test_unknown_suites_and_stale_or_duplicate_classifications_fail_closed(self):
+            path = self.root/'TestPlans/Groups.json'
+            for groups in [
+                {'coreSuites': [], 'desktopUISuites': [], 'mixedSuites': {}},
+                {'coreSuites': ['ExampleTests'], 'desktopUISuites': ['ExampleTests'], 'mixedSuites': {}},
+                {'coreSuites': [], 'desktopUISuites': [], 'mixedSuites': {'ExampleTests': ['testGone']}},
+            ]:
+                path.write_text(json.dumps(groups))
+                result = subprocess.run([sys.executable, str(self.root/'scripts/generate-xcode-project.py')], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+
+        def test_selection_cannot_bypass_desktop_opt_in(self):
+            self.generate()
+            validate_test_selection(self.root, 'Core', ['-only-testing:NotchXTests/ExampleTests/testCore'])
+            validate_test_selection(self.root, 'DesktopUI', ['-only-testing:NotchXTests/ExampleTests/testWindow'])
+            for arguments in [
+                ['-only-testing:NotchXTests/ExampleTests/testWindow'],
+                ['-only-testing:NotchXTests/ExampleTests'],
+                ['-only-testing:OtherTests/testCore'],
+                ['-configuration', 'Release'], ['-testPlan', 'DesktopUI'],
+                ['-xctestrun', 'other.xctestrun'], ['NOTCHX_DESKTOP_UI=1'],
+            ]:
+                with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                    validate_test_selection(self.root, 'Core', arguments)
+
     suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(case)
                                for case in [ObsoleteSourceTests, WorkspaceMetadataTests])
     result = unittest.TextTestRunner().run(suite)
@@ -195,6 +271,12 @@ if '--self-test' in sys.argv:
     self_test()
 
 root = Path(__file__).resolve().parent.parent
+if len(sys.argv) >= 3 and sys.argv[1] == '--test-selection':
+    try:
+        validate_test_selection(root, sys.argv[2], sys.argv[3:])
+    except (ValueError, KeyError, OSError) as error:
+        sys.exit(str(error))
+    sys.exit(0)
 paths = GENERATED_PROJECT_PATHS
 if stale_generated_project_paths(root):
     sys.exit('Native project is stale; run python3 scripts/generate-xcode-project.py and review the diff.')
@@ -212,9 +294,27 @@ if not re.search(r'"' + target_id + r'" = \{\s*"isa" = "PBXNativeTarget";', proj
 test_action = scheme.find("./TestAction")
 if test_action is None or test_action.get("shouldUseLaunchSchemeArgsEnv") != "NO":
     sys.exit("Tests must use their isolated environment.")
-test_flags = {v.get("key"): v.get("value") for v in test_action.findall("./EnvironmentVariables/EnvironmentVariable") if v.get("isEnabled") == "YES"}
-if test_flags.get("NOTCHX_UNIT_TEST_HOST") != "1":
-    sys.exit("Hosted tests must suppress normal application startup.")
+plans = test_action.findall("./TestPlans/TestPlanReference")
+if {p.get('reference') for p in plans} != {'container:TestPlans/Core.xctestplan', 'container:TestPlans/DesktopUI.xctestplan'}:
+    sys.exit('Shared scheme must expose Core and DesktopUI test plans.')
+if [p.get('reference') for p in plans if p.get('default') == 'YES'] != ['container:TestPlans/Core.xctestplan']:
+    sys.exit('Default Xcode testing must use Core, never DesktopUI.')
+selections = {}
+for name in ['Core', 'DesktopUI']:
+    plan = json.loads((root/f'TestPlans/{name}.xctestplan').read_text())
+    flags = {entry['key']: entry['value'] for entry in plan['defaultOptions']['environmentVariableEntries'] if entry.get('enabled', True)}
+    if flags.get('NOTCHX_UNIT_TEST_HOST') != '1':
+        sys.exit('Hosted tests must suppress normal application startup in both plans.')
+    if flags.get('NOTCHX_DESKTOP_UI') != ('1' if name == 'DesktopUI' else '0'):
+        sys.exit('Only the explicit DesktopUI plan may enable desktop interaction.')
+    targets = plan['testTargets']
+    if len(targets) != 1 or targets[0]['target']['name'] != 'NotchXTests' or targets[0].get('enabled', True) is not True:
+        sys.exit('Both plans must run the real native test target.')
+    selections[name] = set(targets[0].get('selectedTests', []))
+    if not selections[name] or targets[0].get('skippedTests'):
+        sys.exit('Each plan must explicitly select its tests.')
+if selections['Core'] & selections['DesktopUI']:
+    sys.exit('Core and DesktopUI must not overlap.')
 deployment_targets = re.findall(r'"MACOSX_DEPLOYMENT_TARGET" = "([^"]+)";', project)
 if not deployment_targets or set(deployment_targets) != {'26.0'}:
     sys.exit("All native targets must require macOS 26.0.")

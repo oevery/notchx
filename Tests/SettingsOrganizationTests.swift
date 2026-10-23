@@ -187,16 +187,19 @@ final class SettingsOrganizationTests: XCTestCase {
                     // window animations while checking page/control geometry.
                     window.makeFirstResponder(nil)
                     navigation.selectedPane = pane
-                    try await Task.sleep(for: .milliseconds(80))
-                    host.layoutSubtreeIfNeeded()
-                    host.displayIfNeeded()
+                    try await waitForPage(pane, in: host)
                     let collapsed = accessibilityElements(in: host)
                     for disclosure in collapsed where disclosure.accessibilityRole?() == .disclosureTriangle {
                         _ = disclosure.accessibilityPerformPress?()
                     }
                     if collapsed.contains(where: { $0.accessibilityRole?() == .disclosureTriangle }) {
-                        try await Task.sleep(for: .milliseconds(80))
-                        host.layoutSubtreeIfNeeded()
+                        try await NativeUI.waitFor("page disclosures expanded", in: host) {
+                            let disclosures = self.accessibilityElements(in: host).filter { $0.accessibilityRole?() == .disclosureTriangle }
+                            return !disclosures.isEmpty && disclosures.allSatisfy { disclosure in
+                                let value: (() -> Any?)? = disclosure.accessibilityValue
+                                return (value?() as? NSNumber)?.intValue == 1
+                            }
+                        }
                     }
                     let elements = accessibilityElements(in: host)
                     XCTAssertNotNil(elements.first { $0.accessibilityIdentifier?() == "settings-page-title" }, "Missing page title: \(pane.id)")
@@ -263,7 +266,7 @@ final class SettingsOrganizationTests: XCTestCase {
             let before = defaults.persistentDomain(forName: domain) ?? [:]
             let host = NSHostingView(rootView: IslandEventSettings(module: .volumeHUD).environmentObject(state))
             let window = makeWindow(host: host, width: 520, height: 280)
-            try await Task.sleep(for: .milliseconds(80))
+            _ = try await NativeUI.waitForElement(in: host, id: "event-duration-volume")
             let elements = accessibilityElements(in: host)
             let field = try XCTUnwrap(elements.first { $0.accessibilityIdentifier?() == "event-duration-volume" })
             XCTAssertEqual(field.accessibilityRole?(), .textField)
@@ -295,15 +298,14 @@ final class SettingsOrganizationTests: XCTestCase {
         let panes: [SettingsPane] = [.general] + [ModuleType.volumeHUD, .battery, .connectivity, .calendar, .notifications].map(SettingsPane.module)
         for pane in panes {
             navigation.selectedPane = pane
-            try await Task.sleep(for: .milliseconds(80))
-            host.layoutSubtreeIfNeeded()
+            try await waitForPage(pane, in: host)
             let elements = accessibilityElements(in: host)
             func moveToMiddle(_ id: String) async throws {
                 let slider = try XCTUnwrap(elements.first { $0.accessibilityIdentifier?() == id + "-slider" })
                 let minimum = try XCTUnwrap(slider.accessibilityMinValue?() as? NSNumber).doubleValue
                 let maximum = try XCTUnwrap(slider.accessibilityMaxValue?() as? NSNumber).doubleValue
                 slider.setAccessibilityValue?(NSNumber(value: (minimum + maximum) / 2))
-                try await Task.sleep(for: .milliseconds(80))
+                await NativeUI.drainMainQueue()
             }
             if pane == .general {
                 try await moveToMiddle("settings-collapse-delay")
@@ -331,17 +333,18 @@ final class SettingsOrganizationTests: XCTestCase {
         let host = NSHostingView(rootView: IslandEventSettings(module: .volumeHUD).environmentObject(state))
         let window = makeWindow(host: host, width: 520, height: 280)
         defer { window.close() }
-        try await Task.sleep(for: .milliseconds(80))
-        let toggle = try XCTUnwrap(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-enabled-volume" })
+        let toggle = try await NativeUI.waitForElement(in: host, id: "event-enabled-volume")
         XCTAssertEqual(toggle.accessibilityPerformPress?(), true)
-        try await Task.sleep(for: .milliseconds(80))
+        try await NativeUI.waitFor("event timing hidden", in: host) {
+            !state.presentationPreferences[.volume].enabled && NativeUI.find(in: host, id: "event-duration-volume") == nil
+        }
         XCTAssertFalse(state.presentationPreferences[.volume].enabled)
         XCTAssertNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-duration-volume" })
         XCTAssertNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-duration-volume-slider" })
         XCTAssertEqual(state.presentationPreferences[.volume].duration, 13.75)
         let disabledToggle = try XCTUnwrap(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-enabled-volume" })
         XCTAssertEqual(disabledToggle.accessibilityPerformPress?(), true)
-        try await Task.sleep(for: .milliseconds(80))
+        _ = try await NativeUI.waitForElement(in: host, id: "event-duration-volume")
         XCTAssertTrue(state.presentationPreferences[.volume].enabled)
         XCTAssertNotNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-duration-volume" })
         XCTAssertNotNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-duration-volume-slider" })
@@ -358,19 +361,21 @@ final class SettingsOrganizationTests: XCTestCase {
         let host = NSHostingView(rootView: ModuleDetailSettingsView(module: .volumeHUD, appState: state).environmentObject(state))
         let window = makeWindow(host: host, width: 520, height: 680)
         defer { window.close() }
-        try await Task.sleep(for: .milliseconds(80))
+        _ = try await NativeUI.waitForElement(in: host, id: "event-duration-volume")
         func toggle() throws -> AnyObject {
             try XCTUnwrap(accessibilityElements(in: host).first {
                 $0.accessibilityIdentifier?() == "data-annotation-id=module-detail-toggle-volumeHUD"
             })
         }
         XCTAssertEqual(try toggle().accessibilityPerformPress?(), true)
-        try await Task.sleep(for: .milliseconds(80))
+        try await NativeUI.waitFor("module settings hidden", in: host) {
+            !state.volumeHUDEnabled && NativeUI.find(in: host, id: "event-duration-volume") == nil
+        }
         XCTAssertFalse(state.volumeHUDEnabled)
         XCTAssertNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-duration-volume" })
         XCTAssertEqual(state.presentationPreferences[.volume].duration, 13.7567)
         XCTAssertEqual(try toggle().accessibilityPerformPress?(), true)
-        try await Task.sleep(for: .milliseconds(80))
+        _ = try await NativeUI.waitForElement(in: host, id: "event-duration-volume")
         XCTAssertTrue(state.volumeHUDEnabled)
         XCTAssertNotNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "event-duration-volume" })
         XCTAssertEqual(state.presentationPreferences[.volume].duration, 13.7567)
@@ -388,12 +393,24 @@ final class SettingsOrganizationTests: XCTestCase {
         let host = NSHostingView(rootView: NotificationAlertControls(manager: manager))
         let window = makeWindow(host: host, width: 520, height: 80)
         defer { window.close() }
-        try await Task.sleep(for: .milliseconds(80))
+        _ = try await NativeUI.waitForElement(in: host, id: "notification-resume-alerts")
         XCTAssertNotNil(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "notification-pause-alerts" })
         let resume = try XCTUnwrap(accessibilityElements(in: host).first { $0.accessibilityIdentifier?() == "notification-resume-alerts" })
         XCTAssertEqual(resume.accessibilityPerformPress?(), true)
         XCTAssertFalse(manager.alertsArePaused)
         XCTAssertTrue(manager.recentNotifications.isEmpty)
+    }
+
+    private func waitForPage(_ pane: SettingsPane, in host: NSView) async throws {
+        try await NativeUI.waitFor("settings page \(pane.id)", in: host) {
+            guard let title = NativeUI.find(in: host, id: "settings-page-title") else { return false }
+            let value: (() -> Any?)? = title.accessibilityValue
+            return (value?() as? String ?? title.accessibilityLabel?()) == pane.title
+        }
+        // Let the selected page's queued SwiftUI update finish before inspecting
+        // controls; a title belonging to the previous page is never sufficient.
+        await NativeUI.drainMainQueue()
+        host.layoutSubtreeIfNeeded()
     }
 
     private func appearanceButtons(_ title: String, in root: Any) -> [AnyObject] {

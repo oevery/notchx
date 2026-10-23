@@ -36,4 +36,4 @@
 - 恢复／撤销在写入前更新 resetGeneration；模块恢复通过 settingResetGeneration 环境值传递。滑块操作、外部数值变更和恢复代次均使旧草稿失效，防止迟到的失焦事件覆盖新状态。
 - 公共组件不申请权限、不创建管理器、不自行恢复偏好，也不触发设备操作。页面继续调用原有功能入口。
 
-验证入口：scripts/test.sh、python3 scripts/release.py build。SettingsLayoutTests 检查真实原生控件的对齐、折叠缩进、恢复尺寸、数值编辑与缩放保留输入；SettingsOrganizationTests 覆盖所有页面、中英文、两种窗口宽度及偏好兼容。真机视觉与交互验收见 [验收清单](ACCEPTANCE.md)。
+验证入口：`bash scripts/test.sh` 默认仅核心行为测试，`bash scripts/test.sh --full` 增加工具自测，两者都不操作桌面 UI。`bash scripts/test.sh --ui` 才显式运行 SettingsLayoutTests 的真实原生控件检查及 SettingsOrganizationTests 的全部页面／双语言／双宽度矩阵，会影响窗口和焦点；偏好兼容等纯状态用例仍在 Core。`python3 scripts/release.py build` 验证签名打包。视觉、真实权限与多屏交互由人工执行 [验收清单](ACCEPTANCE.md)。

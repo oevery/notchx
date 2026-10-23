@@ -11,7 +11,7 @@
 ## 本地打包
 
 ```sh
-bash scripts/test.sh
+bash scripts/test.sh --full -resultBundlePath build/pre-release.xcresult
 python3 scripts/release.py build
 python3 scripts/release.py verify
 ```
@@ -34,7 +34,9 @@ python3 scripts/release.py verify
 
 ## 手动 Release CI 与 Secrets
 
-`.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。使用单个 `macos-26` 任务运行 `scripts/test.sh`（工具检查及原生 XCTest），通过后才读取签名凭据并打包；所有步骤绑定同一次触发的精确提交，不再分流到 Linux。
+`.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。单个 `macos-26` 任务先运行 `scripts/test.sh --checks-only`（工程、资源、本地化、版本快速检查），通过后才读取签名凭据，构建 Release、签名、打包并验证解压产物；所有步骤绑定同一次触发的精确提交。不运行 XCTest 或完整测试工具自测，也不分流到 Linux。
+
+测试由本地负责：发布前对准备触发 CI 的同一个干净提交运行不带筛选参数的 `--full`（Core 加工具自测），保留提交 SHA 与 `.xcresult`；若代码变化，重新验证受影响内容及发布前核心测试。窗口和焦点回归须另行显式运行 `--ui`，视觉和真实权限按人工验收清单执行，分别记录已验证／未验证。CI 不自动证明本地测试已通过，核心通过不等于 UI 或真机验收完成，打包成功也不是完整测试通过；首次构建耗时仍须独立观察。
 
 请在仓库创建 **`release-signing` Environment**，限制为 `main` 分支，并在可用时启用人工审批。该 Environment 配置两个 Secrets：
 

@@ -29,8 +29,8 @@ jobs:
         run: |
           python3 scripts/release.py metadata > "$RUNNER_TEMP/notchx-metadata.json"
           jq -r '"artifact=" + .artifact' "$RUNNER_TEMP/notchx-metadata.json" >> "$GITHUB_OUTPUT"
-      - name: Validate project, localization, release tooling and native XCTest without signing credentials
-        run: bash scripts/test.sh -quiet -resultBundlePath build/release-tests.xcresult
+      - name: Check project, localization and metadata without signing credentials
+        run: bash scripts/test.sh --checks-only
       - name: Build, sign with the fixed identity and verify the extracted archive
         env:
           NOTCHX_SIGNING_P12_BASE64: ${{ secrets.NOTCHX_SIGNING_P12_BASE64 }}
@@ -52,5 +52,6 @@ jobs:
             echo '### NotchX Release preparation'
             echo '固定自签，未经 Apple 公证；不是 Developer ID 分发包。'
             echo '本次仅上传产物，不创建标签或 GitHub Release。'
+            echo 'CI 不运行 XCTest；发布前对相同提交完成核心测试，并分别确认所需 UI 回归与人工验收。'
             echo 'Gatekeeper 放行与权限升级保留仍需用户验收。'
           } >> "$GITHUB_STEP_SUMMARY"

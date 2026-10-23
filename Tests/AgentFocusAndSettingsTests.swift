@@ -164,6 +164,11 @@ final class AgentFocusAndSettingsTests: XCTestCase {
                 }
                 XCTAssertNil(NativeUI.find(in: host, id: "agent-setting-delivery"))
                 XCTAssertNil(NativeUI.find(in: host, id: "agent-delivery-details"))
+                XCTAssertNil(NativeUI.find(in: host, id: "agent-configure-connection"))
+                XCTAssertFalse(hasEventCount(in: host))
+                // Widths exercise geometry; exercise the same management/lifecycle
+                // sequence once per language at the more constrained width.
+                guard width == 380 else { continue }
                 let refreshes = source.refreshes
                 let check = try await NativeUI.waitForElement(in: host, id: "agent-check-connection")
                 XCTAssertEqual(check.accessibilityPerformPress?(), true)

@@ -3,6 +3,7 @@
 import base64
 import contextlib
 import io
+import itertools
 import json
 import os
 from pathlib import Path
@@ -247,22 +248,50 @@ exit "${FIXTURE_PYTHON_EXIT:-0}"''',
                                         env={**environment, **variables}, capture_output=True)
                 self.assertEqual(result.returncode == 0, not variables)
 
-    def test_complete_and_native_only_entry_preserve_arguments_and_failure_status(self):
+    def test_core_full_and_explicit_ui_preserve_arguments_and_failure_status(self):
         environment, log = self.tool_environment()
-        for native_only, python_exit, native_exit in [(False, 0, 0), (True, 0, 0), (False, 0, 37), (True, 0, 37), (False, 41, 0)]:
-            with self.subTest(native_only=native_only, python_exit=python_exit, native_exit=native_exit):
+        # xcodebuild/python3 are recording stubs; this never launches desktop UI.
+        for mode, (python_exit, native_exit) in itertools.product(
+                [None, "--core", "--daily", "--full", "--native-only", "--ui"], [(0, 0), (0, 37), (41, 0)]):
+            with self.subTest(mode=mode, python_exit=python_exit, native_exit=native_exit):
                 log.write_text("")
-                arguments = (["--native-only"] if native_only else []) + ["-only-testing:NotchXTests/CalendarConcurrencyTests", "-resultBundlePath", "path with spaces.xcresult"]
+                selected = "SettingsPresentationTests" if mode == "--ui" else "CalendarConcurrencyTests"
+                arguments = ([mode] if mode else []) + [f"-only-testing:NotchXTests/{selected}", "-resultBundlePath", "path with spaces.xcresult"]
                 result = subprocess.run(["/bin/bash", str(release.ROOT / "scripts/test.sh"), *arguments],
                     env={**environment, "FIXTURE_PYTHON_EXIT": str(python_exit), "FIXTURE_NATIVE_EXIT": str(native_exit)}, capture_output=True)
-                self.assertEqual(result.returncode, python_exit or native_exit)
+                checks_failed = bool(python_exit)
+                self.assertEqual(result.returncode, python_exit if checks_failed else native_exit)
                 commands = log.read_text().splitlines()
                 self.assertEqual(commands.count("preflight"), 1)
-                self.assertEqual("scripts/test-release.py" in commands, not native_only and not python_exit)
-                self.assertEqual("xcodebuild" in commands, not python_exit)
-                if not python_exit:
+                self.assertEqual("scripts/test-release.py" in commands, mode == "--full" and not python_exit)
+                self.assertEqual("xcodebuild" in commands, not checks_failed)
+                if not checks_failed:
                     self.assertEqual(commands[-3:], arguments[-3:])
-                    self.assertNotIn("--native-only", commands)
+                    plan = "DesktopUI" if mode == "--ui" else "Core"
+                    self.assertEqual(commands[commands.index("-testPlan") + 1], plan)
+                    self.assertTrue(any(command.startswith(f"scripts/check-native-project.py --test-selection {plan} ") for command in commands))
+                    self.assertNotIn(mode, commands)
+
+    def test_ci_checks_never_build_or_run_tests_and_propagate_failures(self):
+        environment, log = self.tool_environment()
+        for failure in [0, 41]:
+            log.write_text("")
+            result = subprocess.run(["/bin/bash", str(release.ROOT / "scripts/test.sh"), "--checks-only"],
+                env={**environment, "FIXTURE_PYTHON_EXIT": str(failure)}, capture_output=True)
+            self.assertEqual(result.returncode, failure)
+            commands = log.read_text().splitlines()
+            self.assertEqual(commands.count("preflight"), 1)
+            self.assertNotIn("xcodebuild", commands)
+            self.assertNotIn("scripts/test-release.py", commands)
+            self.assertFalse(any("--self-test" in command for command in commands))
+            if not failure:
+                self.assertIn("scripts/check-native-project.py", commands)
+                self.assertIn("scripts/check-localization.py", commands)
+                self.assertIn("scripts/release.py metadata", commands)
+        for arguments in [["--checks-only", "-quiet"], ["--unknown"]]:
+            result = subprocess.run(["/bin/bash", str(release.ROOT / "scripts/test.sh"), *arguments],
+                                    env=environment, capture_output=True)
+            self.assertEqual(result.returncode, 2)
 
 
 if __name__ == "__main__":
