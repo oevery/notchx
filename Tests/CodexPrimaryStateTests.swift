@@ -47,10 +47,45 @@ final class CodexPrimaryStateTests: XCTestCase {
         let lost = core.losePrimary(kind: .daemon, threads: [id.sessionID])
         XCTAssertEqual(lost.first?.status, .unknown)
         XCTAssertNil(core.snapshot.primaryChannels[id]); XCTAssertNil(core.snapshot.tools[id])
+        XCTAssertFalse(core.snapshot.liveSessionIDs.contains(id))
+        XCTAssertFalse(core.retainedSessionIDs.contains(id))
         XCTAssertEqual(core.ingestPrimary(primary).first?.status, .running)
         var internalRun = CodexPrimarySnapshot(kind: .daemon, threadID: "internal-fixture", turnID: "turn-x")
         internalRun.classification = .internalSuggestion
         XCTAssertTrue(core.ingestPrimary(internalRun).isEmpty)
         XCTAssertFalse(core.retainedSessionIDs.contains(CodexAgentState.id("internal-fixture")))
+    }
+
+    func testCompletedNativeSessionLeavesLiveInventoryOnDisconnectAndEmptyIdleSnapshotIsVisible() {
+        var core = CodexAgentState()
+        let id = CodexAgentState.id(AgentFixtures.thread)
+        var value = CodexPrimarySnapshot(kind: .desktop, threadID: id.sessionID)
+        value.classification = .userSession; value.status = .idle; value.revision = 1; value.title = "Idle fixture"
+        XCTAssertEqual(core.ingestPrimary(value).first?.status, .idle)
+        XCTAssertTrue(core.retainedSessionIDs.contains(id))
+        value.turnID = "turn-1"; value.status = .running; value.revision = 2
+        _ = core.ingestPrimary(value)
+        value.status = .completed; value.revision = 3
+        _ = core.ingestPrimary(value)
+        XCTAssertTrue(core.snapshot.liveSessionIDs.contains(id))
+        _ = core.losePrimary(kind: .desktop, threads: [id.sessionID])
+        XCTAssertFalse(core.snapshot.liveSessionIDs.contains(id))
+        XCTAssertFalse(core.retainedSessionIDs.contains(id))
+    }
+
+    func testDisablingHookFallbackRemovesCompletedHookOnlySessionButRetainsNativeSession() {
+        var core = CodexAgentState()
+        core.setListening(true)
+        _ = core.ingest(AgentFixtures.envelope("UserPromptSubmit"))
+        _ = core.ingest(AgentFixtures.envelope("Stop"))
+        let hookID = CodexAgentState.id(AgentFixtures.thread)
+        var native = CodexPrimarySnapshot(kind: .daemon, threadID: AgentFixtures.other, turnID: "native-turn")
+        native.classification = .userSession; native.status = .running; native.revision = 1
+        _ = core.ingestPrimary(native)
+        XCTAssertTrue(core.snapshot.liveSessionIDs.contains(hookID), "The hook fixture must establish a completed live session before disabling it")
+        _ = core.stopHookActivity()
+        XCTAssertFalse(core.snapshot.liveSessionIDs.contains(hookID))
+        XCTAssertFalse(core.retainedSessionIDs.contains(hookID))
+        XCTAssertTrue(core.retainedSessionIDs.contains(CodexAgentState.id(AgentFixtures.other)))
     }
 }

@@ -10,6 +10,7 @@ extension AgentActivityStatus {
         case .completed: return L10n.text("Turn ended")
         case .failed: return L10n.text("Failed")
         case .cancelled: return L10n.text("Cancelled")
+        case .idle: return L10n.text("Idle")
         case .unknown: return L10n.text("Activity unavailable")
         }
     }
@@ -21,6 +22,7 @@ extension AgentActivityStatus {
         case .completed: return "checkmark.circle"
         case .failed: return "exclamationmark.circle"
         case .cancelled: return "stop.circle"
+        case .idle: return "pause.circle"
         case .unknown: return "questionmark.circle"
         }
     }
@@ -36,7 +38,7 @@ struct AgentUnavailableView: View {
         switch connection {
         case .unconfigured: return L10n.text("Agent not configured")
         case .disconnected: return L10n.text("Agent source disconnected")
-        case .connected: return L10n.text("No recent Codex sessions")
+        case .connected: return L10n.text("No live Codex sessions")
         case .permissionDenied: return L10n.text("Agent source access denied")
         case .unsupportedSchema: return L10n.text("Agent source format unsupported")
         }
@@ -49,7 +51,7 @@ struct AgentUnavailableView: View {
                  ? L10n.text("Enable Codex in Agent settings to receive activity. Hooks can still be managed.")
                  : connection == .connected
                  ? L10n.text("Sessions use existing Codex connections for live activity, with Hooks as fallback.")
-                 : L10n.text("The local Codex catalog is unavailable. Verified hooks can still report sessions; check the connection in Agent settings."))
+                 : L10n.text("No live session has been confirmed. Open a Codex chat or check the connection in Agent settings."))
                 .font(descriptionFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -180,8 +182,8 @@ struct AgentSettingsDetail: View {
         if manager.groups.isEmpty {
             AgentUnavailableView(connection: manager.connection, descriptionFont: SettingTypography.supporting, isIntegrationEnabled: manager.isCodexActive)
         } else {
-            Text(manager.groups.count == 1 ? L10n.text("1 recent session") : L10n.format("%d recent sessions", manager.groups.count))
-            SettingSupportingText("Entries without verified events keep unknown activity.")
+            Text(L10n.format("%d live sessions", manager.liveGroups.count))
+            SettingSupportingText("Only sessions confirmed by a live source are shown.")
         }
         Text(!manager.codexHookFallbackEnabled ? L10n.text("Fallback Hooks are off")
             : manager.interaction.isListening ? L10n.text("Hook listener ready") : L10n.text("Not needed while connected"))

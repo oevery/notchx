@@ -20,6 +20,8 @@ private final class DaemonSocketFixture: @unchecked Sendable {
     let advertised: String
     private let listener: Int32
     private let lock = NSLock()
+    private let writeLock = NSRecursiveLock()
+    private var emit: ((Data) throws -> Void)?
     private var messages: [[String: Any]] = []
     private let onMutation: (@Sendable () -> Void)?
     var requests: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return messages }
@@ -49,6 +51,14 @@ private final class DaemonSocketFixture: @unchecked Sendable {
     func stop() {
         _ = shutdown(listener, SHUT_RDWR)
         try? FileManager.default.removeItem(at: root)
+    }
+
+    func startTurn(thread: String, turn: String) throws {
+        lock.lock(); let send = emit; lock.unlock()
+        guard let send else { throw AgentHookWireError.unavailable }
+        try send(JSONSerialization.data(withJSONObject: [
+            "method": "turn/started", "params": ["threadId": thread,
+                "turn": ["id": turn, "status": "inProgress"]]]))
     }
 
     func writePendingFile(name: String) throws {
@@ -99,6 +109,7 @@ private final class DaemonSocketFixture: @unchecked Sendable {
                 return
             }
             func frame(_ payload: Data, opcode: UInt8 = 1, final: Bool = true) throws {
+                writeLock.lock(); defer { writeLock.unlock() }
                 var data = Data([(final ? 0x80 : 0) | opcode])
                 if payload.count < 126 { data.append(UInt8(payload.count)) }
                 else { data.append(126); data.append(UInt8(payload.count >> 8)); data.append(UInt8(payload.count & 255)) }
@@ -108,6 +119,8 @@ private final class DaemonSocketFixture: @unchecked Sendable {
                 try AgentUnixSocket.write(Data(data.dropFirst()), to: client, until: deadline)
             }
             var resumed = false, emitted = false
+            lock.lock(); emit = { try frame($0) }; lock.unlock()
+            defer { lock.lock(); emit = nil; lock.unlock() }
             for _ in 0..<80 {
                 let prefix = [UInt8](try exact(2))
                 guard prefix[0] & 0x80 != 0, prefix[1] & 0x80 != 0 else { return }
@@ -131,6 +144,7 @@ private final class DaemonSocketFixture: @unchecked Sendable {
                 let threadID = (request["params"] as? [String: Any])?["threadId"] as? String ?? Self.thread
                 var metadata = Self.metadata
                 metadata["id"] = threadID
+                if outcome == .children, threadID == Self.foreign { metadata["threadSource"] = "automation" }
                 if outcome == .nativeFiles { metadata["cwd"] = root.path; metadata["path"] = root.appendingPathComponent("sessions/fixture.jsonl").path }
                 if outcome == .children, threadID == Self.child {
                     metadata["parentThreadId"] = Self.thread
@@ -186,10 +200,14 @@ private final class DaemonSocketFixture: @unchecked Sendable {
                 default: return
                 }
                 let encoded = try JSONSerialization.data(withJSONObject: ["id": id, "result": result])
-                try frame(Data([7]), opcode: 9)
-                let middle = encoded.count / 2
-                try frame(Data(encoded.prefix(middle)), final: false)
-                try frame(Data(encoded.dropFirst(middle)), opcode: 0)
+                do {
+                    // Keep injected events outside a fragmented response.
+                    writeLock.lock(); defer { writeLock.unlock() }
+                    try frame(Data([7]), opcode: 9)
+                    let middle = encoded.count / 2
+                    try frame(Data(encoded.prefix(middle)), final: false)
+                    try frame(Data(encoded.dropFirst(middle)), opcode: 0)
+                }
                 if outcome.usesNativeEvents, resumed, !emitted, method == "thread/loaded/list" {
                     emitted = true
                     usleep(150_000)
@@ -237,12 +255,45 @@ private final class DaemonSocketFixture: @unchecked Sendable {
     }
 
     static var metadata: [String: Any] {
-        ["id": thread, "source": "cli", "name": "fixture", "canAcceptDirectInput": true,
+        ["id": thread, "source": "cli", "threadSource": "user", "name": "fixture", "canAcceptDirectInput": true,
          "status": ["type": "idle"], "updatedAt": 1_700_000_000]
     }
 }
 
 final class CodexDaemonChannelTests: XCTestCase {
+    @MainActor func testCapacityDeferredRootIsDiscoveredAfterCandidatesAreRemoved() async throws {
+        let fixture = try DaemonSocketFixture(); defer { fixture.stop() }
+        let channel = CodexDaemonChannel(root: fixture.root, interval: 0.05); defer { channel.stop() }
+        let candidates = Set((0..<80).map { String(format: "00000000-0000-4000-8000-%012d", $0) })
+        var checkedFullInventory = false
+        var latest: CodexPrimarySnapshot?
+        channel.start(threads: candidates) {
+            if case .unavailable(_, let ids) = $0, ids == candidates { checkedFullInventory = true }
+            if case .snapshot(let value) = $0 { latest = value }
+        }
+        try await NativeUI.waitFor("initial full inventory processed") { checkedFullInventory }
+        XCTAssertNil(latest)
+        channel.updateThreads(Set(candidates.sorted().dropFirst()))
+        try await NativeUI.waitFor("deferred resident root admitted after capacity frees") { latest?.threadID == DaemonSocketFixture.thread }
+        XCTAssertEqual(latest?.classification, .userSession)
+    }
+
+    @MainActor func testLoadedUserThreadIsDiscoveredWithoutCatalogueCandidates() async throws {
+        let fixture = try DaemonSocketFixture(); defer { fixture.stop() }
+        let channel = CodexDaemonChannel(root: fixture.root, interval: 60); defer { channel.stop() }
+        var latest: CodexPrimarySnapshot?
+        channel.start(threads: []) { if case .snapshot(let value) = $0 { latest = value } }
+        try await NativeUI.waitFor("daemon discovers its own loaded user thread") { latest != nil }
+        XCTAssertEqual(latest?.threadID, DaemonSocketFixture.thread)
+        XCTAssertEqual(latest?.status, .completed)
+        XCTAssertTrue(fixture.requests.contains { $0["method"] as? String == "thread/loaded/list" })
+        channel.updateThreads([])
+        try fixture.startTurn(thread: DaemonSocketFixture.thread, turn: "after-catalogue-eviction")
+        try await NativeUI.waitFor("resident root still receives live turns") {
+            latest?.turnID == "after-catalogue-eviction" && latest?.status == .running
+        }
+    }
+
     @MainActor func testFileApprovalExtractsExactPendingCallAndRechecksPathsBeforeReply() async throws {
         let fixture = try DaemonSocketFixture(.nativeFiles)
         defer { fixture.stop() }
@@ -276,7 +327,11 @@ final class CodexDaemonChannelTests: XCTestCase {
         XCTAssertEqual(values[DaemonSocketFixture.thread]?.observedChildren.first?.status, .unknown)
         XCTAssertFalse(fixture.requests.contains { $0["method"] as? String == "thread/unsubscribe" })
         channel.updateThreads([])
-        try await NativeUI.waitFor("parent and early child released") { fixture.requests.filter { $0["method"] as? String == "thread/unsubscribe" }.count == 2 }
+        try fixture.startTurn(thread: DaemonSocketFixture.child, turn: "child-after-eviction")
+        try await NativeUI.waitFor("early child still receives live turns") {
+            values[DaemonSocketFixture.child]?.turnID == "child-after-eviction"
+                && values[DaemonSocketFixture.child]?.status == .running
+        }
     }
 
     @MainActor func testNativeApprovalWithAutomaticReviewerStaysNonActionable() async throws {
@@ -412,7 +467,14 @@ final class CodexDaemonChannelTests: XCTestCase {
         let attached = fixture.requests.filter { $0["method"] as? String == "thread/resume" }.compactMap { ($0["params"] as? [String: Any])?["threadId"] as? String }
         XCTAssertEqual(Set(attached), [DaemonSocketFixture.thread, DaemonSocketFixture.child])
         channel.updateThreads([])
-        try await NativeUI.waitFor("both subscriptions released") { fixture.requests.filter { $0["method"] as? String == "thread/unsubscribe" }.count == 2 }
+        for thread in [DaemonSocketFixture.thread, DaemonSocketFixture.child] {
+            try fixture.startTurn(thread: thread, turn: "after-catalogue-eviction")
+        }
+        try await NativeUI.waitFor("parent and child both retain live coverage") {
+            [DaemonSocketFixture.thread, DaemonSocketFixture.child].allSatisfy {
+                snapshots[$0]?.turnID == "after-catalogue-eviction" && snapshots[$0]?.status == .running
+            }
+        }
     }
 
     func testOwnedDaemonSymlinkAcceptsOnlyPrivateSocketAndDirectories() throws {

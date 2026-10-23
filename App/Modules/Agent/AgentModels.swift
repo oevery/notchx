@@ -9,7 +9,7 @@ struct AgentSessionID: Hashable, Codable, Sendable {
 }
 
 enum AgentActivityStatus: String, CaseIterable, Sendable {
-    case running, waitingInput, waitingApproval, completed, failed, cancelled, unknown
+    case running, waitingInput, waitingApproval, completed, failed, cancelled, idle, unknown
 
     var isWaiting: Bool { self == .waitingInput || self == .waitingApproval }
     var isTerminal: Bool { self == .completed || self == .failed || self == .cancelled }

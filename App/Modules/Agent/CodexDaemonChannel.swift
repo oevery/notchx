@@ -12,6 +12,7 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
     private let timeout: TimeInterval
     private var threads: Set<String> = []
     private var requestedThreads: Set<String> = []
+    private var residentRoots: Set<String> = []
     private var childParents: [String: String] = [:]
     private var inspectedThreads: Set<String> = []
     private var receive: (@MainActor (CodexPrimaryChannelUpdate) -> Void)?
@@ -64,7 +65,7 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
     func updateThreads(_ threads: Set<String>) {
         let requested = Set(threads.filter { UUID(uuidString: $0) != nil }.prefix(80))
         requestedThreads = requested
-        var values = requested
+        var values = requested.union(residentRoots)
         for _ in 0..<8 {
             let children = childParents.filter { values.contains($0.value) }.map { $0.key }
             let expanded = values.union(children)
@@ -85,7 +86,7 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
         connectionID = nil; states.removeAll(); requests.removeAll(); acknowledged.removeAll()
         retiredRequests.removeAll()
         refreshingToken = nil
-        childParents.removeAll(); inspectedThreads.removeAll()
+        childParents.removeAll(); inspectedThreads.removeAll(); residentRoots.removeAll()
         consecutiveFailures = 0
         receive?(.unavailable(.daemon, threads))
         receive = nil
@@ -110,7 +111,7 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
         let removed = threads
         consecutiveFailures = min(consecutiveFailures + 1, 10)
         connectionID = nil; connection?.cancel(); connection = nil; states.removeAll(); requests.removeAll()
-        childParents.removeAll(); inspectedThreads.removeAll(); threads = requestedThreads
+        childParents.removeAll(); inspectedThreads.removeAll(); residentRoots.removeAll(); threads = requestedThreads
         retiredRequests.removeAll()
         receive?(.unavailable(.daemon, removed))
     }
@@ -364,23 +365,26 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
     }
 
     private func allowed(_ snapshot: CodexPrimarySnapshot) -> Bool {
-        if snapshot.classification == .userSession { return snapshot.parentThreadID == nil && requestedThreads.contains(snapshot.threadID) }
+        if snapshot.classification == .userSession { return snapshot.parentThreadID == nil && threads.contains(snapshot.threadID) }
         guard snapshot.classification == .subagent, let parent = snapshot.parentThreadID else { return false }
         return parent != snapshot.threadID && threads.contains(parent) && childParents[snapshot.threadID] == parent
     }
 
     private func discoverChildren(_ resident: Set<String>, connection: CodexDaemonConnection, token: UUID) async throws {
-        // Metadata only, once per resident identity/connection. Unknown roots
-        // are never resumed. Multi-level children are admitted parent first.
+        // Metadata only, once per resident identity/connection. Verify user
+        // roots from the daemon itself; the catalogue is only a discovery hint.
         var candidates: [String: CodexPrimarySnapshot] = [:]
         for id in resident.subtracting(threads).subtracting(inspectedThreads).sorted().prefix(80) {
             guard generation == token, !Task.isCancelled else { return }
             let result = try await connection.request(method: "thread/read", params: ["threadId": id, "includeTurns": false])
             guard generation == token else { return }
             inspectedThreads.insert(id)
-            if let metadata = result["thread"] as? [String: Any], metadata["id"] as? String == id,
-               let snapshot = Self.childMetadata(metadata) {
-                candidates[id] = snapshot
+            if let metadata = result["thread"] as? [String: Any], metadata["id"] as? String == id {
+                if let snapshot = Self.normalize(thread: metadata, turn: nil), snapshot.classification == .userSession,
+                   metadata["threadSource"] as? String == "user", snapshot.parentThreadID == nil {
+                    guard threads.count < 80 else { inspectedThreads.remove(id); continue }
+                    residentRoots.insert(id); threads.insert(id)
+                } else if let snapshot = Self.childMetadata(metadata) { candidates[id] = snapshot }
             }
         }
         for _ in 0..<8 {
@@ -448,11 +452,12 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
         state.activate(directInput: metadata["canAcceptDirectInput"] as? Bool == true && state.snapshot.classification == .userSession)
         state.setQueueAvailable(queue?["data"] is [Any])
         states[thread] = state
+        if state.snapshot.classification == .userSession { residentRoots.insert(thread) }
         publish(thread)
     }
 
     private func refresh(token: UUID) async {
-        guard generation == token, !threads.isEmpty, refreshingToken != token else { return }
+        guard generation == token, refreshingToken != token else { return }
         refreshingToken = token
         defer { if refreshingToken == token { refreshingToken = nil } }
         let connection = existingConnection()
@@ -460,6 +465,11 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
         do {
             let resident = try await loaded(connection)
             guard generation == token, !Task.isCancelled else { return }
+            residentRoots.formIntersection(resident)
+            let unloaded = threads.subtracting(resident).subtracting(requestedThreads)
+            threads.subtract(unloaded)
+            for thread in unloaded { states.removeValue(forKey: thread); clearRequests(thread) }
+            if !unloaded.isEmpty { receive?(.unavailable(.daemon, unloaded)) }
             try await discoverChildren(resident, connection: connection, token: token)
             let watched = threads
             let absent = watched.subtracting(resident)
@@ -533,6 +543,7 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
         if let source = thread["source"] as? [String: Any],
            value.parentThreadID == nil || CodexDesktopExtras.spawnParent(source) != value.parentThreadID { return nil }
         let source = thread["source"] as? String
+        if value.parentThreadID == nil, let origin = thread["threadSource"] as? String, origin != "user" { return nil }
         if value.parentThreadID != nil { value.classification = .subagent }
         else if ["cli", "vscode", "exec", "appServer"].contains(source ?? "") { value.classification = .userSession }
         value.title = AgentMessagePreview.line(thread["name"] as? String) ?? ""
@@ -551,6 +562,7 @@ final class CodexDaemonChannel: CodexPrimaryChannel {
         else if runtimeType == "active" { value.status = .running }
         else if status == "interrupted" { value.status = .cancelled }
         else if status == "completed" { value.status = .completed }
+        else if runtimeType == "idle", turn == nil { value.status = .idle }
         let items = Array((turn?["items"] as? [[String: Any]] ?? []).suffix(200))
         for item in items {
             let type = item["type"] as? String ?? ""

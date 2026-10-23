@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import NotchX
 
@@ -13,8 +14,9 @@ private final class PrimarySourceFixture: CodexPrimaryChannel {
     var starts = 0
     var answers: [AgentInputResponse] = []
     var delivery = AgentMessageDelivery.accepted
+    var threads: Set<String> = []
     func start(threads: Set<String>, receive: @escaping @MainActor (CodexPrimaryChannelUpdate) -> Void) { self.receive = receive; stopped = false; starts += 1 }
-    func updateThreads(_ threads: Set<String>) {}
+    func updateThreads(_ threads: Set<String>) { self.threads = threads }
     func stop() { stopped = true }
     func send(_ request: AgentMessageRequest) async -> AgentMessageDelivery { messages.append(request); return delivery }
     func respondToInput(_ response: AgentInputResponse) async -> AgentMessageDelivery { answers.append(response); return .accepted }
@@ -25,6 +27,52 @@ private final class PrimarySourceFixture: CodexPrimaryChannel {
 
 @MainActor
 final class CodexPrimarySourceTests: XCTestCase {
+    func testCatalogueOnlyProvidesCandidatesAndCannotRestoreDisconnectedCards() async throws {
+        let root = try AgentFixtures.directory(), primary = PrimarySourceFixture()
+        let directory = root.appendingPathComponent("sqlite")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(directory.appendingPathComponent("codex-dev.db").path, &db), SQLITE_OK)
+        let sql = "CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, source_kind TEXT, thread_source TEXT, source_updated_at REAL, display_title TEXT, missing_candidate INTEGER); INSERT INTO local_thread_catalog VALUES ('local','" + AgentFixtures.thread + "','vscode','user',1700000000,'Fixture candidate',0);"
+        XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK); sqlite3_close(db)
+        let source = CodexLiveStatusSource(root: root, socketPath: root.appendingPathComponent("unused.sock").path, channels: [primary])
+        let manager = AgentManager(sourceFactory: { source })
+        defer { manager.setEnabled(false); try? FileManager.default.removeItem(at: root) }
+        manager.setEnabled(true)
+        try await NativeUI.waitFor("catalogue candidate discovered") { primary.threads.contains(AgentFixtures.thread) }
+        XCTAssertTrue(manager.groups.isEmpty)
+        XCTAssertNotEqual(manager.connection, .connected)
+        var snapshot = CodexPrimarySnapshot(kind: .desktop, threadID: AgentFixtures.thread)
+        snapshot.classification = .userSession; snapshot.status = .idle; snapshot.revision = 1
+        primary.receive?(.snapshot(snapshot))
+        XCTAssertEqual(manager.idleGroups.count, 1)
+        XCTAssertEqual(sqlite3_open(directory.appendingPathComponent("codex-dev.db").path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE local_thread_catalog SET display_title = 'Renamed idle candidate', source_updated_at = 1700000002;", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        source.refreshConnection()
+        try await NativeUI.waitFor("catalogue title updated without overwriting native idle status") {
+            manager.groups.first?.root.title == "Renamed idle candidate"
+        }
+        XCTAssertEqual(manager.idleGroups.first?.status, .idle)
+        XCTAssertTrue(manager.activeGroups.isEmpty)
+        snapshot.turnID = "turn-1"; snapshot.status = .running; snapshot.revision = 2
+        primary.receive?(.snapshot(snapshot))
+        XCTAssertEqual(manager.activeGroups.count, 1)
+        snapshot.status = .completed; snapshot.revision = 3
+        primary.receive?(.snapshot(snapshot))
+        XCTAssertTrue(manager.activeGroups.isEmpty); XCTAssertEqual(manager.recentCompletedGroups.count, 1)
+        primary.receive?(.unavailable(.desktop, [AgentFixtures.thread]))
+        XCTAssertTrue(manager.groups.isEmpty)
+        XCTAssertEqual(sqlite3_open(directory.appendingPathComponent("codex-dev.db").path, &db), SQLITE_OK)
+        let insert = "INSERT INTO local_thread_catalog VALUES ('local','" + AgentFixtures.other + "','vscode','user',1700000001,'New candidate',0);"
+        XCTAssertEqual(sqlite3_exec(db, insert, nil, nil, nil), SQLITE_OK); sqlite3_close(db)
+        source.refreshConnection()
+        try await NativeUI.waitFor("new catalogue candidate discovered") { primary.threads.contains(AgentFixtures.other) }
+        XCTAssertTrue(manager.groups.isEmpty)
+        XCTAssertNotEqual(manager.connection, .connected)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("hooks.json").path))
+    }
+
     func testFallbackRequiresOptInAndOnlyRunsAfterBothExistingOwnersWithdraw() async throws {
         let root = try AgentFixtures.directory(), desktop = PrimarySourceFixture(), daemon = PrimarySourceFixture(kind: .daemon)
         let path = root.appendingPathComponent("fallback.sock").path

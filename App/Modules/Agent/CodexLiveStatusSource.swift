@@ -26,8 +26,8 @@ final class CodexLiveStatusSource: AgentInteractiveSource {
     private var fallbackGeneration = UUID()
 
     private var connection: AgentSourceConnection {
-        if !primarySnapshots.isEmpty || (!verifiedRoots.isEmpty && core.snapshot.isListening) { return .connected }
-        return catalogueConnection
+        if !core.snapshot.liveSessionIDs.isEmpty { return .connected }
+        return catalogueConnection == .connected ? .disconnected : catalogueConnection
     }
 
     init(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex"),
@@ -60,8 +60,9 @@ final class CodexLiveStatusSource: AgentInteractiveSource {
             case .event(let metadata):
                 self.knownThreads.insert(metadata.id.sessionID)
                 self.threadDates[metadata.id.sessionID] = max(self.threadDates[metadata.id.sessionID] ?? .distantPast, metadata.updatedAt)
-                if let normalized = self.core.register(metadata) { self.receive?(.event(normalized)) }
-                self.updatePrimaryThreads()
+                if let normalized = self.core.register(metadata), self.core.snapshot.liveSessionIDs.contains(metadata.id) {
+                    self.receive?(.event(normalized))
+                }
             case .retainingSessions(let ids):
                 self.knownThreads = Set(ids.map(\.sessionID)).union(self.verifiedRoots).union(self.primarySnapshots.keys)
                 self.updatePrimaryThreads()
@@ -73,7 +74,7 @@ final class CodexLiveStatusSource: AgentInteractiveSource {
                 self.catalogueConnection = state
                 self.receive?(.connection(self.connection))
                 self.publish([])
-            default: self.receive?(update)
+            default: break
             }
         }
     }
@@ -115,6 +116,7 @@ final class CodexLiveStatusSource: AgentInteractiveSource {
         buffered.removeAll(); verifiedRoots.removeAll()
         core.setLiveObserverCount(0)
         publish(core.stopHookActivity())
+        receive?(.retainingSessions(core.retainedSessionIDs))
     }
 
     func stop() {

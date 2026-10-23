@@ -267,19 +267,65 @@ final class AgentExperienceTests: XCTestCase {
         XCTAssertEqual(manager.attentionRequestID, "b")
     }
 
-    func testCatalogueHistoryDoesNotIncreaseTheCompactLiveCountAndCanBeBrowsed() {
+    func testCatalogueHistoryIsNotDisplayedAndOnlyConfirmedIdleSessionsAreFolded() {
         let source = AgentMessageFixtureSource(), manager = AgentManager(sourceFactory: { source })
         manager.setEnabled(true); defer { manager.setEnabled(false) }
         publish(a, source: source); publish(b, source: source, status: .unknown)
         source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: [a])))
         XCTAssertEqual(manager.liveGroups.map { $0.id }, [a])
-        XCTAssertEqual(manager.recentGroups.map { $0.id }, [b])
+        XCTAssertTrue(manager.idleGroups.isEmpty)
+        XCTAssertEqual(manager.activeGroups.map { $0.id }, [a])
         XCTAssertEqual(manager.defaultDetailGroup?.id, a)
         manager.showSessionList()
         XCTAssertTrue(manager.panel.prefersSessionList)
+        publish(b, source: source, sequence: 2, status: .completed)
+        source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: [a, b])))
+        XCTAssertEqual(manager.idleGroups.map { $0.id }, [b])
+        XCTAssertNil(manager.defaultDetailGroup, "The list keeps idle sessions behind their disclosure")
         manager.selectSession(b)
-        XCTAssertEqual(manager.panel.route, .detail(b))
+        XCTAssertEqual(manager.currentGroup?.id, a, "A selected completed session cannot hide running work in the preview")
         manager.leavePanel()
         XCTAssertFalse(manager.panel.prefersSessionList)
+        publish(a, source: source, sequence: 2, status: .completed)
+        XCTAssertTrue(manager.activeGroups.isEmpty); XCTAssertEqual(manager.idleGroups.map { $0.id }, [b])
+        XCTAssertNil(manager.defaultDetailGroup); XCTAssertEqual(manager.currentGroup?.id, a)
+        publish(a, source: source, turn: "turn-2", sequence: 3)
+        XCTAssertEqual(manager.activeGroups.map { $0.id }, [a])
+        XCTAssertEqual(manager.idleGroups.map { $0.id }, [b])
+    }
+
+    func testRecentCompletionsAreBoundedByEventsAndClearedOnRestartDisconnectOrDisable() {
+        let source = AgentMessageFixtureSource(), manager = AgentManager(sourceFactory: { source })
+        manager.setEnabled(true); defer { manager.setEnabled(false) }
+        let ids = (0..<5).map { CodexAgentState.id(String(format: "00000000-0000-4000-8000-%012d", $0)) }
+        publish(ids[4], source: source, status: .completed)
+        for id in ids.prefix(4) { publish(id, source: source) }
+        source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: Set(ids))))
+        XCTAssertTrue(manager.recentCompletedGroups.isEmpty, "Initial completed history is not a new completion")
+        for (index, id) in ids.prefix(4).enumerated() {
+            publish(id, source: source, sequence: 2, status: index == 1 ? .failed : index == 2 ? .cancelled : .completed)
+        }
+        XCTAssertTrue(manager.activeGroups.isEmpty)
+        XCTAssertEqual(manager.recentCompletedGroups.map { $0.id }, [ids[3], ids[2], ids[1]])
+        XCTAssertEqual(Set(manager.idleGroups.map { $0.id }), [ids[0], ids[4]])
+        publish(ids[1], source: source, sequence: 3, status: .failed)
+        XCTAssertEqual(manager.recentCompletedGroups.map { $0.id }, [ids[3], ids[2], ids[1]], "Repeated terminal metadata cannot reorder completions")
+        publish(ids[2], source: source, turn: "turn-2", sequence: 3)
+        XCTAssertEqual(manager.activeGroups.map { $0.id }, [ids[2]])
+        XCTAssertEqual(manager.recentCompletedGroups.map { $0.id }, [ids[3], ids[1]])
+        source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: Set(ids).subtracting([ids[3]]))))
+        XCTAssertEqual(manager.recentCompletedGroups.map { $0.id }, [ids[1]])
+        source.receive?(.connection(.disconnected))
+        XCTAssertTrue(manager.defaultGroups.isEmpty)
+        source.receive?(.connection(.connected))
+        publish(ids[1], source: source, status: .completed)
+        XCTAssertTrue(manager.recentCompletedGroups.isEmpty)
+        publish(ids[0], source: source)
+        publish(ids[0], source: source, sequence: 2, status: .completed)
+        XCTAssertEqual(manager.recentCompletedGroups.count, 1)
+        manager.setEnabled(false); manager.setEnabled(true)
+        publish(ids[0], source: source, status: .completed)
+        source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: [ids[0]])))
+        XCTAssertTrue(manager.recentCompletedGroups.isEmpty)
     }
 }

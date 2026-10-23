@@ -84,15 +84,15 @@ final class AgentInteractionViewTests: XCTestCase {
         }
     }
 
-    func testRecentHeaderHasIntrinsicHitAreaAndStaysBelowLiveRowsAcrossRepeatedToggles() async throws {
+    func testIdleHeaderHasIntrinsicHitAreaAndStaysBelowActiveRowsAcrossRepeatedToggles() async throws {
         let source = AgentViewFixtureSource(), manager = AgentManager(sourceFactory: { source })
         manager.setEnabled(true); defer { manager.setEnabled(false) }
         let live = CodexAgentState.id(AgentFixtures.thread)
         source.receive?(.event(event(AgentFixtures.thread, status: .running)))
-        source.receive?(.event(event(AgentFixtures.other, status: .unknown)))
-        source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: [live])))
+        source.receive?(.event(event(AgentFixtures.other, status: .completed)))
+        source.receive?(.interaction(AgentInteractionSnapshot(liveSessionIDs: [live, CodexAgentState.id(AgentFixtures.other)])))
         manager.showSessionList()
-        let domain = "app.notchx.tests.recent-header." + UUID().uuidString
+        let domain = "app.notchx.tests.idle-header." + UUID().uuidString
         let defaults = UserDefaults(suiteName: domain)!
         defer { defaults.removePersistentDomain(forName: domain) }
         let state = AppState(preferenceStore: defaults)
@@ -100,9 +100,9 @@ final class AgentInteractionViewTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 658, height: 600), styleMask: [], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = view
         defer { window.contentView = nil; window.close() }
-        let toggle = try await NativeUI.waitForElement(in: view, id: "agent-toggle-recent")
+        let toggle = try await NativeUI.waitForElement(in: view, id: "agent-toggle-idle")
         let rowID = "agent-select-" + AgentFixtures.other
-        let header = try NativeUI.frame(in: view, id: "agent-toggle-recent")
+        let header = try NativeUI.frame(in: view, id: "agent-toggle-idle")
         let liveFrame = try NativeUI.frame(in: view, id: "agent-select-" + live.sessionID)
         XCTAssertLessThan(header.width, 220, "Trailing blank space must not be part of the toggle")
         XCTAssertLessThanOrEqual(header.maxY, liveFrame.minY + 1)
@@ -111,22 +111,22 @@ final class AgentInteractionViewTests: XCTestCase {
         window.orderFront(nil)
         try NativeUI.click(at: NSPoint(x: window.frame.maxX - 50, y: header.midY), in: window)
         await NativeUI.drainMainQueue()
-        XCTAssertNil(NativeUI.find(in: view, id: rowID), "Blank space beside the island title must not expand recent sessions")
+        XCTAssertNil(NativeUI.find(in: view, id: rowID), "Blank space beside the island title must not expand idle sessions")
         try NativeUI.click(at: NSPoint(x: header.maxX - 4, y: header.midY), in: window)
         _ = try await NativeUI.waitForElement(in: view, id: rowID)
-        let expandedHeader = try NativeUI.frame(in: view, id: "agent-toggle-recent")
+        let expandedHeader = try NativeUI.frame(in: view, id: "agent-toggle-idle")
         try NativeUI.click(at: NSPoint(x: expandedHeader.minX + 3, y: expandedHeader.midY), in: window)
-        try await NativeUI.waitFor("island arrow collapses recent sessions", in: view) { NativeUI.find(in: view, id: rowID) == nil }
+        try await NativeUI.waitFor("island arrow collapses idle sessions", in: view) { NativeUI.find(in: view, id: rowID) == nil }
         for _ in 0..<3 {
             XCTAssertEqual(toggle.accessibilityPerformPress?(), true)
             _ = try await NativeUI.waitForElement(in: view, id: rowID)
-            try await NativeUI.waitFor("recent rows increase natural height", in: view) { state.agentPanelContentHeight > collapsedHeight + 30 }
-            XCTAssertEqual(try NativeUI.frame(in: view, id: "agent-toggle-recent").maxY, header.maxY, accuracy: 1)
+            try await NativeUI.waitFor("idle rows increase natural height", in: view) { state.agentPanelContentHeight > collapsedHeight + 30 }
+            XCTAssertEqual(try NativeUI.frame(in: view, id: "agent-toggle-idle").maxY, header.maxY, accuracy: 1)
             XCTAssertEqual(toggle.accessibilityPerformPress?(), true)
-            try await NativeUI.waitFor("recent rows collapse without leaving estimated height", in: view) {
+            try await NativeUI.waitFor("idle rows collapse without leaving estimated height", in: view) {
                 abs(state.agentPanelContentHeight - collapsedHeight) < 1 && NativeUI.find(in: view, id: rowID) == nil
             }
-            XCTAssertEqual(try NativeUI.frame(in: view, id: "agent-toggle-recent").maxY, header.maxY, accuracy: 1)
+            XCTAssertEqual(try NativeUI.frame(in: view, id: "agent-toggle-idle").maxY, header.maxY, accuracy: 1)
         }
     }
 

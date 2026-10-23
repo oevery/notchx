@@ -33,7 +33,7 @@ final class CodexDesktopStatusChannel: CodexPrimaryChannel {
                 self.deliveredSequence = sequence
                 switch update {
                 case .snapshot(let snapshot):
-                    guard self.includes(snapshot.threadID, parent: snapshot.parentThreadID) else { return }
+                    guard snapshot.classification == .userSession || self.includes(snapshot.threadID, parent: snapshot.parentThreadID) else { return }
                     self.covered[snapshot.threadID] = snapshot
                 case .unavailable(_, let threads): for thread in threads { self.covered.removeValue(forKey: thread) }
                 }
@@ -46,9 +46,8 @@ final class CodexDesktopStatusChannel: CodexPrimaryChannel {
 
     func updateThreads(_ threads: Set<String>) {
         roots = threads
-        let removed = Set(covered.keys.filter { !includes($0, parent: covered[$0]?.parentThreadID) })
-        for thread in removed { covered.removeValue(forKey: thread) }
-        if !removed.isEmpty { receive?(.unavailable(.desktop, removed)) }
+        // Catalogue eviction is not an owner disconnect. The worker retains
+        // verified subscriptions until the live source actually disappears.
         worker?.updateThreads(threads)
     }
 
@@ -57,7 +56,7 @@ final class CodexDesktopStatusChannel: CodexPrimaryChannel {
         var cursor = parent
         for _ in 0..<8 {
             guard let id = cursor else { return false }
-            if roots.contains(id) { return true }
+            if roots.contains(id) || covered[id]?.classification == .userSession { return true }
             cursor = covered[id]?.parentThreadID
         }
         return false
@@ -336,7 +335,7 @@ enum CodexDesktopProjection {
         // those IPC methods or activity links exist. Their full coverage and
         // synchronous policy semantics are different contracts.
         snapshot.capabilities = [.lifecycle, .messages, .tools, .progress]
-        guard let turn = turns.last else { snapshot.status = .unknown; snapshot.capabilities = []; return snapshot }
+        guard let turn = turns.last else { snapshot.status = runtime == "idle" ? .idle : .unknown; snapshot.capabilities = []; return snapshot }
         // Desktop inserts an optimistic local turn with a null ID before its
         // start acknowledgement supplies the real turn ID. This is a known
         // transition, not a revision gap. Keep consuming patches, but expose no
@@ -478,7 +477,8 @@ enum CodexDesktopProjection {
 /// blocked read; condition wakes a reconnect delay or empty-catalog wait.
 private final class CodexDesktopStatusWorker: @unchecked Sendable {
     private struct Subscription {
-        var state: CodexDesktopStreamState
+        var state: CodexDesktopStreamState?
+        var parent: String?
         var snapshotDeadline: TimeInterval?
         var lastResubscribe: TimeInterval = 0
     }
@@ -491,11 +491,13 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
     private var deliverySequence: UInt64 = 0
     private var subscriptions: [String: Subscription] = [:]
     private var candidateParents: [String: String] = [:]
+    private var announcedRoots: Set<String> = []
     private var nextProbe: [String: TimeInterval] = [:]
     private var client = "initializing-client"
     private var fd: Int32 = -1
     private var lastFrameBytes = 0
     private static let maximumThreads = 32
+    private static let maximumSubscriptions = 64
 
     init(root: URL, threads: Set<String>, receive: @escaping @Sendable (UInt64, CodexPrimaryChannelUpdate) -> Void) {
         self.root = root; roots = Self.bounded(threads); self.receive = receive
@@ -524,9 +526,6 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
     private func run() {
         var delay: TimeInterval = 0.25
         while !stopped {
-            condition.lock()
-            while roots.isEmpty && !cancelled { condition.wait() }
-            condition.unlock()
             if stopped { break }
             do {
                 try connect()
@@ -534,7 +533,7 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
                 guard let id = CodexDesktopWire.clientID(initialized) else { throw AgentHookWireError.invalidMessage }
                 client = id
                 let connectedAt = now
-                while !stopped, !requested.isEmpty {
+                while !stopped {
                     try reconcile()
                     var entry = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
                     let ready = poll(&entry, 1, 250)
@@ -547,7 +546,7 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
             disconnect()
             if stopped { break }
             condition.lock()
-            if !cancelled, !roots.isEmpty { _ = condition.wait(until: Date().addingTimeInterval(delay)) }
+            if !cancelled { _ = condition.wait(until: Date().addingTimeInterval(delay)) }
             condition.unlock()
             delay = min(delay * 2, 15)
         }
@@ -581,12 +580,13 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
         condition.lock(); descriptor = nil; condition.unlock()
         if fd >= 0 { close(fd); fd = -1 }
         let removed = Set(subscriptions.keys)
-        subscriptions.removeAll(); candidateParents.removeAll(); nextProbe.removeAll()
+        subscriptions.removeAll(); candidateParents.removeAll(); announcedRoots.removeAll(); nextProbe.removeAll()
         if !removed.isEmpty, !stopped { emit(.unavailable(.desktop, removed)) }
     }
 
     private func reconcile() throws {
-        let roots = requested
+        let retainedRoots = Set(subscriptions.compactMap { $0.value.state != nil && $0.value.parent == nil ? $0.key : nil })
+        let roots = requested.union(retainedRoots).union(announcedRoots)
         // A child is reachable only through a live requested root/ancestor.
         var desired = roots
         for _ in 0..<8 {
@@ -594,24 +594,34 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
             let next = desired.union(more)
             if next == desired { break }; desired = next
         }
-        desired = Set(desired.sorted { roots.contains($0) && !roots.contains($1) || roots.contains($0) == roots.contains($1) && $0 < $1 }.prefix(Self.maximumThreads))
+        desired = Set(desired.sorted {
+            let leftLive = subscriptions[$0]?.state != nil, rightLive = subscriptions[$1]?.state != nil
+            if leftLive != rightLive { return leftLive }
+            if roots.contains($0) != roots.contains($1) { return roots.contains($0) }
+            let left = nextProbe[$0] ?? 0, right = nextProbe[$1] ?? 0
+            return left == right ? $0 < $1 : left < right
+        }.prefix(Self.maximumSubscriptions))
         for thread in Set(subscriptions.keys).subtracting(desired) { try unfollow(thread); withdraw(thread) }
         candidateParents = candidateParents.filter { desired.contains($0.key) && desired.contains($0.value) }
         nextProbe = nextProbe.filter { desired.contains($0.key) }
         for (thread, entry) in subscriptions {
-            if let deadline = entry.snapshotDeadline, now > deadline { try unfollow(thread); withdraw(thread); nextProbe[thread] = now + 15 }
+            if let deadline = entry.snapshotDeadline, now > deadline {
+                try unfollow(thread); withdraw(thread); nextProbe[thread] = now + 30
+                if entry.state == nil { announcedRoots.remove(thread) }
+            }
         }
-        var budget = 4
-        for thread in desired.sorted() where subscriptions[thread] == nil && now >= (nextProbe[thread] ?? 0) {
+        var budget = 8
+        let queued = desired.sorted {
+            let left = nextProbe[$0] ?? 0, right = nextProbe[$1] ?? 0
+            return left == right ? $0 < $1 : left < right
+        }
+        for thread in queued where subscriptions[thread] == nil && now >= (nextProbe[thread] ?? 0) {
             guard budget > 0, !stopped else { break }; budget -= 1
             nextProbe[thread] = now + 30
-            let response = try request("thread-owner-discovery", version: 1, params: ["hostId": "local", "conversationId": thread])
-            guard let owner = CodexDesktopWire.ownerID(response) else { continue }
-            let settings = try request("thread-follower-read-model-settings", version: 1, params: ["conversationId": thread], target: owner)
-            guard CodexDesktopWire.validSettings(settings, owner: owner), requested.contains(thread) || candidateParents[thread] != nil else { continue }
-            let parent = roots.contains(thread) ? nil : candidateParents[thread]
-            subscriptions[thread] = Subscription(state: CodexDesktopStreamState(thread: thread, owner: owner, expectedParent: parent), snapshotDeadline: now + 3)
-            try follow(thread: thread, owner: owner, following: true)
+            // Broadcast once, then continue reading. An absent owner costs no
+            // serial request timeout and cannot starve later candidates.
+            subscriptions[thread] = Subscription(parent: roots.contains(thread) ? nil : candidateParents[thread], snapshotDeadline: now + 3)
+            try follow(thread: thread, owner: nil, following: true)
         }
     }
 
@@ -626,28 +636,56 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
         emit(.unavailable(.desktop, removed))
     }
     private func unfollow(_ thread: String) throws {
-        if let entry = subscriptions[thread] { try follow(thread: thread, owner: entry.state.owner, following: false) }
+        if let entry = subscriptions[thread] { try follow(thread: thread, owner: entry.state?.owner, following: false) }
     }
-    private func follow(thread: String, owner: String, following: Bool) throws {
-        try write(["type": "broadcast", "method": "thread-stream-following-changed", "version": 1,
-            "sourceClientId": client, "targetClientIds": [owner],
-            "params": ["conversationId": thread, "hostId": "local", "following": following]])
+    private func follow(thread: String, owner: String?, following: Bool) throws {
+        var message: [String: Any] = ["type": "broadcast", "method": "thread-stream-following-changed", "version": 1,
+            "sourceClientId": client,
+            "params": ["conversationId": thread, "hostId": "local", "following": following]]
+        if let owner { message["targetClientIds"] = [owner] }
+        try write(message)
     }
 
     private func handle(_ message: [String: Any]) throws {
+        if message["type"] as? String == "client-discovery-request", let id = message["requestId"] as? String {
+            try write(["type": "client-discovery-response", "requestId": id, "response": ["canHandle": false]])
+            return
+        }
         guard message["type"] as? String == "broadcast", let method = message["method"] as? String,
               let params = message["params"] as? [String: Any] else { return }
+        if let targets = message["targetClientIds"] as? [String], !targets.contains(client) { return }
         if method == "ipc-connection-reset" { throw AgentHookWireError.unavailable }
         if method == "client-status-changed", let id = params["clientId"] as? String {
             if params["status"] as? String == "disconnected" {
-                for thread in subscriptions.keys.filter({ subscriptions[$0]?.state.owner == id }) { withdraw(thread); nextProbe[thread] = now + 1 }
+                for thread in subscriptions.keys.filter({ subscriptions[$0]?.state?.owner == id }) { withdraw(thread); nextProbe[thread] = now + 1 }
             } else if params["status"] as? String == "connected" {
                 for thread in nextProbe.keys { nextProbe[thread] = min(nextProbe[thread] ?? now, now + 1) }
             }
             return
         }
+        if method == "thread-stream-following-changed", CodexDesktopProjection.integer(message["version"]) == 1,
+           params["hostId"] as? String == "local", params["following"] as? Bool == true,
+           let thread = params["conversationId"] as? String, UUID(uuidString: thread) != nil,
+           let source = message["sourceClientId"] as? String, source != client, AgentHookEnvelope.validID(source),
+           !requested.contains(thread), candidateParents[thread] == nil, announcedRoots.count < Self.maximumThreads {
+            announcedRoots.insert(thread)
+            return
+        }
         guard let thread = params["conversationId"] as? String, var entry = subscriptions[thread] else { return }
-        switch entry.state.consume(message) {
+        if method == "thread-stream-following-status-requested", params["hostId"] as? String == "local",
+           CodexDesktopProjection.integer(message["version"]) == 1, let owner = entry.state?.owner, message["sourceClientId"] as? String == owner {
+            try follow(thread: thread, owner: owner, following: true)
+            return
+        }
+        var state: CodexDesktopStreamState
+        if let existing = entry.state { state = existing }
+        else {
+            guard method == "thread-stream-state-changed",
+                  (params["change"] as? [String: Any])?["type"] as? String == "snapshot",
+                  let owner = message["sourceClientId"] as? String, owner != client, AgentHookEnvelope.validID(owner) else { return }
+            state = CodexDesktopStreamState(thread: thread, owner: owner, expectedParent: entry.parent)
+        }
+        switch state.consume(message) {
         case .ignored: return
         case .resubscribe:
             emit(.unavailable(.desktop, [thread]))
@@ -656,15 +694,15 @@ private final class CodexDesktopStatusWorker: @unchecked Sendable {
             guard now - entry.lastResubscribe >= 5 else {
                 try unfollow(thread); withdraw(thread); nextProbe[thread] = now + 30; return
             }
-            entry.lastResubscribe = now; entry.snapshotDeadline = now + 3
+            entry.state = state; entry.lastResubscribe = now; entry.snapshotDeadline = now + 3
             subscriptions[thread] = entry
-            try follow(thread: thread, owner: entry.state.owner, following: true)
+            try follow(thread: thread, owner: state.owner, following: true)
         case .snapshot(let snapshot):
-            entry.snapshotDeadline = nil; subscriptions[thread] = entry
+            entry.state = state; entry.snapshotDeadline = nil; subscriptions[thread] = entry
             // Also bound retained tree sizes across multiple followed roots.
-            let bytes = subscriptions.values.reduce(0) { $0 + $1.state.retainedBytes }
+            let bytes = subscriptions.values.reduce(0) { $0 + ($1.state?.retainedBytes ?? 0) }
             guard bytes <= 16 * 1024 * 1024 else { throw AgentHookWireError.invalidMessage }
-            for child in entry.state.childCandidates where subscriptions.count + candidateParents.count < Self.maximumThreads {
+            for child in state.childCandidates where subscriptions.count + candidateParents.count < Self.maximumSubscriptions {
                 if !requested.contains(child), candidateParents[child] == nil { candidateParents[child] = thread }
             }
             emit(.snapshot(snapshot))

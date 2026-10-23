@@ -70,6 +70,7 @@ struct CodexAgentState {
     }
     private var catalogue: [String: AgentSessionEvent] = [:]
     private var runs: [String: Run] = [:]
+    private var unmaterializedStatuses: [String: AgentActivityStatus] = [:]
     private var retired: [String: [String]] = [:]
     private var closedTurns: [String: String] = [:]
     private var seenEvents: [String] = []
@@ -83,7 +84,7 @@ struct CodexAgentState {
     private(set) var snapshot = AgentInteractionSnapshot()
     private(set) var invalidatedRequests: [String] = []
     var retainedSessionIDs: Set<AgentSessionID> {
-        Set(catalogue.values.map(\.id)).union(snapshot.liveSessionIDs)
+        snapshot.liveSessionIDs
             .union(observedChildren.values.map(\.id))
             .subtracting(hidden.map(Self.id)).subtracting(closedTurns.keys.map(Self.id))
     }
@@ -96,7 +97,8 @@ struct CodexAgentState {
         hookTurns.removeAll()
         var events: [AgentSessionEvent] = []
         for thread in Array(runs.keys) where snapshot.primaryChannels[Self.id(thread)] == nil {
-            guard var run = runs[thread], !run.terminal else { continue }
+            snapshot.liveSessionIDs.remove(Self.id(thread))
+            guard var run = runs[thread] else { continue }
             run.status = .unknown; run.activeTools = []; runs[thread] = run
             snapshot.tools.removeValue(forKey: Self.id(thread))
             snapshot.contexts[Self.id(thread)] = nil
@@ -105,7 +107,9 @@ struct CodexAgentState {
         }
         return events
     }
-    var activeRootThreads: Set<String> { Set(runs.filter { !$0.value.terminal && $0.value.parent == nil }.keys) }
+    var activeRootThreads: Set<String> {
+        Set(runs.filter { !$0.value.terminal && $0.value.parent == nil && snapshot.liveSessionIDs.contains(Self.id($0.key)) }.keys)
+    }
     mutating func recordCoveredHook(_ envelope: AgentHookEnvelope) {
         guard envelope.isValid, !seenEvents.contains(envelope.id) else { return }
         seenEvents.append(envelope.id)
@@ -177,8 +181,15 @@ struct CodexAgentState {
             context.branch = value.context.branch ?? context.branch
             context.model = value.context.model ?? context.model
             snapshot.contexts[id] = context
-            return []
+            snapshot.liveSessionIDs.insert(id)
+            if let run = runs[value.threadID] { return [event(thread: value.threadID, run: run)] }
+            unmaterializedStatuses[value.threadID] = value.status
+            sequence += 1
+            return [AgentSessionEvent(id: id, runID: nil, requestID: nil, eventID: UUID().uuidString, sequence: sequence,
+                parentID: value.parentThreadID.map(Self.id), classification: value.classification, status: value.status,
+                title: catalogue[value.threadID]?.title ?? value.title, summary: nil, updatedAt: value.updatedAt ?? .distantPast)]
         }
+        unmaterializedStatuses.removeValue(forKey: value.threadID)
         if let current = runs[value.threadID], current.turn != turn {
             // A stale initial snapshot cannot undo newer Hook-established input.
             if let previous = snapshot.contexts[id]?.startedAt,
@@ -260,13 +271,15 @@ struct CodexAgentState {
             snapshot.primaryChannels.removeValue(forKey: Self.id(thread))
             snapshot.primaryCapabilities.removeValue(forKey: Self.id(thread))
             primaryRevisions.removeValue(forKey: thread)
+            unmaterializedStatuses.removeValue(forKey: thread)
             let native = primaryApprovalIDs.removeValue(forKey: thread) ?? []
             snapshot.approvals.removeAll { native.contains($0.id) }
             _ = setObservedChildren([], parent: thread)
             // Disconnection is not task completion. Keep metadata and draft,
             // but revoke live progress and any primary response handles.
-            guard var run = runs[thread], !run.terminal else { continue }
-            if preserveHookActivity, hookTurns[thread] == run.turn { continue }
+            if preserveHookActivity, snapshot.isListening, let run = runs[thread], hookTurns[thread] == run.turn { continue }
+            snapshot.liveSessionIDs.remove(Self.id(thread))
+            guard var run = runs[thread] else { continue }
             run.status = .unknown; run.activeTools = []; runs[thread] = run
             snapshot.contexts[Self.id(thread)]?.pendingInput = nil
             primaryInputs.remove(thread)
@@ -329,12 +342,12 @@ struct CodexAgentState {
         if let run = runs[metadata.id.sessionID] { return event(thread: metadata.id.sessionID, run: run) }
         sequence += 1
         return AgentSessionEvent(id: metadata.id, runID: nil, requestID: nil, eventID: UUID().uuidString,
-            sequence: sequence, parentID: nil, classification: .userSession, status: .unknown,
+            sequence: sequence, parentID: nil, classification: .userSession, status: unmaterializedStatuses[metadata.id.sessionID] ?? .unknown,
             title: metadata.title, summary: nil, updatedAt: metadata.updatedAt)
     }
 
     mutating func retainCatalogue(_ ids: Set<AgentSessionID>) -> Set<AgentSessionID> {
-        catalogue = catalogue.filter { ids.contains($0.value.id) }
+        catalogue = catalogue.filter { ids.contains($0.value.id) || snapshot.liveSessionIDs.contains($0.value.id) }
         return retainedSessionIDs
     }
 

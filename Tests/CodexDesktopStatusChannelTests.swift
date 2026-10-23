@@ -36,14 +36,20 @@ private enum DesktopStatusFixtures {
 /// Real socket fixture for lifecycle/cancellation boundaries; the state
 /// accumulator itself is real in these tests, not replaced by a fake reducer.
 private final class DesktopStatusSocket: @unchecked Sendable {
-    enum Mode { case steady, gap, disconnectOnce, largeSnapshot, oversizedFrame }
+    enum Mode { case steady, gap, disconnectOnce, largeSnapshot, oversizedFrame, silentCandidates, partialSnapshotTimeout, announcedThread, ownerChange, childSession }
     let root: URL
     private let listener: Int32
     private let lock = NSLock()
+    private let writeLock = NSLock()
+    private var emit: (([String: Any]) throws -> Void)?
     private var stopped = false
     private var client: Int32?
     private var methods: [String] = []
     var requests: [String] { lock.lock(); defer { lock.unlock() }; return methods }
+    private var followedThreads: [String] = []
+    private var unfollowedThreads: [String] = []
+    var follows: [String] { lock.lock(); defer { lock.unlock() }; return followedThreads }
+    var unfollows: [String] { lock.lock(); defer { lock.unlock() }; return unfollowedThreads }
     private var isStopped: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
 
     init(_ mode: Mode = .steady) throws {
@@ -62,6 +68,11 @@ private final class DesktopStatusSocket: @unchecked Sendable {
         lock.lock(); stopped = true
         if let client { _ = shutdown(client, SHUT_RDWR) }
         _ = shutdown(listener, SHUT_RDWR); lock.unlock()
+    }
+    func sendPatches(_ patches: [[String: Any]], base: Int64, revision: Int64) throws {
+        lock.lock(); let send = emit; lock.unlock()
+        guard let send else { throw AgentHookWireError.unavailable }
+        try send(DesktopStatusFixtures.patches(patches, base: base, revision: revision))
     }
     private func serve(_ mode: Mode) {
         defer { close(listener); try? FileManager.default.removeItem(at: root) }
@@ -93,6 +104,7 @@ private final class DesktopStatusSocket: @unchecked Sendable {
             return bytes
         }
         func send(_ object: [String: Any]) throws {
+            writeLock.lock(); defer { writeLock.unlock() }
             let payload = try JSONSerialization.data(withJSONObject: object)
             var length = UInt32(payload.count).littleEndian
             var frame = withUnsafeBytes(of: &length) { Data($0) }; frame.append(payload)
@@ -101,6 +113,8 @@ private final class DesktopStatusSocket: @unchecked Sendable {
             try AgentUnixSocket.write(Data(frame.dropFirst(2)), to: fd, until: ProcessInfo.processInfo.systemUptime + 2)
         }
         var followingCount = 0
+        lock.lock(); emit = send; lock.unlock()
+        defer { lock.lock(); emit = nil; lock.unlock() }
         while !isStopped {
             let header = try read(4), length = header.enumerated().reduce(0) { $0 | Int($1.element) << ($1.offset * 8) }
             guard length > 0, length < 64 * 1024, let object = try JSONSerialization.jsonObject(with: read(length)) as? [String: Any],
@@ -111,14 +125,33 @@ private final class DesktopStatusSocket: @unchecked Sendable {
                     "resultType": "success", "handledByClientId": DesktopStatusFixtures.owner]
                 switch method {
                 case "initialize": response["result"] = ["clientId": "status-client-" + String(connection)]
-                case "thread-owner-discovery": response["result"] = ["supportsUntrustedAppInput": true]
-                case "thread-follower-read-model-settings": response["result"] = ["settings": ["resumeState": "resumed", "model": "fixture-model"]]
+                case "thread-owner-discovery", "thread-follower-read-model-settings": continue
                 default: throw AgentHookWireError.invalidMessage
                 }
                 try send(response)
+                if mode == .announcedThread {
+                    try send(["type": "broadcast", "method": "thread-stream-following-changed", "version": 1,
+                        "sourceClientId": "existing-desktop", "params": ["hostId": "local", "conversationId": DesktopStatusFixtures.thread, "following": true]])
+                }
             } else if method == "thread-stream-following-changed",
-                      (object["params"] as? [String: Any])?["following"] as? Bool == true {
+                      let params = object["params"] as? [String: Any], let thread = params["conversationId"] as? String {
+                if params["following"] as? Bool == false {
+                    lock.lock(); unfollowedThreads.append(thread); lock.unlock(); continue
+                }
+                lock.lock(); followedThreads.append(thread); lock.unlock()
+                if mode == .childSession, thread == AgentFixtures.other {
+                    var child = DesktopStatusFixtures.state()
+                    child["id"] = thread; child["parentThreadId"] = DesktopStatusFixtures.thread; child["threadSource"] = "subagent"
+                    try send(DesktopStatusFixtures.message(["type": "snapshot", "revision": 1, "conversationState": child], thread: thread))
+                    continue
+                }
+                guard thread == DesktopStatusFixtures.thread else { continue }
                 followingCount += 1
+                if mode == .partialSnapshotTimeout, connection == 1 {
+                    let frame = try CodexDesktopWire.frame(DesktopStatusFixtures.snapshot())
+                    try AgentUnixSocket.write(Data(frame.prefix(2)), to: fd, until: ProcessInfo.processInfo.systemUptime + 2)
+                    continue
+                }
                 if mode == .oversizedFrame {
                     var length = UInt32(CodexDesktopWire.maximumIncomingFrameBytes + 1).littleEndian
                     try withUnsafeBytes(of: &length) { try AgentUnixSocket.write(Data($0), to: fd, until: ProcessInfo.processInfo.systemUptime + 2) }
@@ -126,8 +159,22 @@ private final class DesktopStatusSocket: @unchecked Sendable {
                 }
                 let revision: Int64 = followingCount == 1 ? Int64(connection) : 11
                 var document = DesktopStatusFixtures.state()
+                if mode == .childSession {
+                    document = DesktopStatusFixtures.state(items: [["id": "child-link", "type": "subAgentActivity", "agentThreadId": AgentFixtures.other]])
+                }
                 if mode == .largeSnapshot { document["unusedHistory"] = String(repeating: "x", count: 5 * 1024 * 1024) }
-                try send(DesktopStatusFixtures.snapshot(document, revision: revision))
+                var message = DesktopStatusFixtures.snapshot(document, revision: revision)
+                if mode == .ownerChange, followingCount > 1 { message["sourceClientId"] = "replacement-owner" }
+                var wrongTarget = message; wrongTarget["targetClientIds"] = ["another-client"]
+                try send(wrongTarget)
+                try send(message)
+                if mode == .ownerChange, followingCount == 1 {
+                    var foreign = DesktopStatusFixtures.snapshot(DesktopStatusFixtures.state(active: false), revision: 2)
+                    foreign["sourceClientId"] = "foreign-owner"
+                    try send(foreign)
+                    try send(["type": "broadcast", "method": "client-status-changed", "version": 0,
+                        "params": ["clientId": DesktopStatusFixtures.owner, "status": "disconnected"]])
+                }
                 if mode == .disconnectOnce, connection == 1 { return }
                 if mode == .gap, followingCount == 1 {
                     try send(DesktopStatusFixtures.patches([], base: 9, revision: 10))
@@ -138,6 +185,94 @@ private final class DesktopStatusSocket: @unchecked Sendable {
 }
 
 final class CodexDesktopStatusChannelTests: XCTestCase {
+    @MainActor func testThirtyOneSilentCandidatesDoNotBlockLiveSnapshotOrResetHealthyConnection() async throws {
+        let fixture = try DesktopStatusSocket(.silentCandidates); defer { fixture.stop() }
+        let channel = CodexDesktopStatusChannel(root: fixture.root); defer { channel.stop() }
+        let received = expectation(description: "Last candidate connects without serial owner requests")
+        let silent = Set((0..<31).map { String(format: "00000000-0000-0000-0000-%012d", $0) })
+        var withdrawals = 0
+        channel.start(threads: silent.union([DesktopStatusFixtures.thread])) { update in
+            switch update {
+            case .snapshot(let snapshot):
+                XCTAssertEqual(snapshot.threadID, DesktopStatusFixtures.thread)
+                XCTAssertEqual(snapshot.ownerID, DesktopStatusFixtures.owner)
+                XCTAssertEqual(snapshot.status, .running)
+                XCTAssertEqual(snapshot.activeToolID, "cmd")
+                received.fulfill()
+            case .unavailable(_, let ids): if ids.contains(DesktopStatusFixtures.thread) { withdrawals += 1 }
+            }
+        }
+        await fulfillment(of: [received], timeout: 3)
+        try await NativeUI.waitFor("silent subscriptions expire without dropping the live owner", timeout: .seconds(5)) { !fixture.unfollows.isEmpty }
+        XCTAssertEqual(withdrawals, 0, "One unresponsive candidate must not withdraw other sessions")
+        XCTAssertEqual(fixture.requests.filter { $0 == "initialize" }.count, 1, "Keep the healthy router connection")
+        XCTAssertEqual(Set(fixture.follows), silent.union([DesktopStatusFixtures.thread]))
+        XCTAssertEqual(fixture.follows.count, 32, "No retry storm while snapshots are absent")
+        XCTAssertEqual(fixture.requests, ["initialize"])
+    }
+
+    @MainActor func testPartialSnapshotTimeoutReconnectsBeforeReadingAnotherFrame() async throws {
+        let fixture = try DesktopStatusSocket(.partialSnapshotTimeout); defer { fixture.stop() }
+        let channel = CodexDesktopStatusChannel(root: fixture.root); defer { channel.stop() }
+        let received = expectation(description: "Fresh socket recovers after a truncated response header")
+        channel.start(threads: [DesktopStatusFixtures.thread]) { update in
+            if case .snapshot(let snapshot) = update {
+                XCTAssertEqual(snapshot.revision, 2)
+                received.fulfill()
+            }
+        }
+        await fulfillment(of: [received], timeout: 6)
+        XCTAssertEqual(fixture.requests.filter { $0 == "initialize" }.count, 2)
+    }
+
+    @MainActor func testLiveAnnouncementDiscoversThreadWithoutCatalogueCandidates() async throws {
+        let fixture = try DesktopStatusSocket(.announcedThread); defer { fixture.stop() }
+        let channel = CodexDesktopStatusChannel(root: fixture.root); defer { channel.stop() }
+        let received = expectation(description: "Announced live thread receives a snapshot")
+        channel.start(threads: []) { update in
+            if case .snapshot(let snapshot) = update {
+                XCTAssertEqual(snapshot.threadID, DesktopStatusFixtures.thread); received.fulfill()
+            }
+        }
+        await fulfillment(of: [received], timeout: 3)
+        XCTAssertEqual(fixture.requests, ["initialize"])
+    }
+
+    @MainActor func testOwnerDisconnectRevokesCoverageBeforeBindingReplacementSnapshot() async throws {
+        let fixture = try DesktopStatusSocket(.ownerChange); defer { fixture.stop() }
+        let channel = CodexDesktopStatusChannel(root: fixture.root); defer { channel.stop() }
+        let received = expectation(description: "Replacement owner confirmed")
+        var events: [String] = []
+        channel.start(threads: [DesktopStatusFixtures.thread]) { update in
+            switch update {
+            case .snapshot(let snapshot):
+                XCTAssertEqual(snapshot.status, .running, "A foreign owner's completed snapshot must be ignored")
+                events.append(snapshot.ownerID ?? "missing")
+                if snapshot.ownerID == "replacement-owner" { received.fulfill() }
+            case .unavailable: events.append("withdrawn")
+            }
+        }
+        await fulfillment(of: [received], timeout: 4)
+        XCTAssertEqual(events, [DesktopStatusFixtures.owner, "withdrawn", "replacement-owner"])
+    }
+
+    @MainActor func testChildSnapshotSurvivesParentLeavingCatalogueWindow() async throws {
+        let fixture = try DesktopStatusSocket(.childSession); defer { fixture.stop() }
+        let channel = CodexDesktopStatusChannel(root: fixture.root); defer { channel.stop() }
+        let child = expectation(description: "Child still belongs to the retained live parent")
+        channel.start(threads: [DesktopStatusFixtures.thread]) { update in
+            if case .snapshot(let snapshot) = update {
+                if snapshot.threadID == DesktopStatusFixtures.thread { channel.updateThreads([]) }
+                else {
+                    XCTAssertEqual(snapshot.threadID, AgentFixtures.other)
+                    XCTAssertEqual(snapshot.parentThreadID, DesktopStatusFixtures.thread)
+                    child.fulfill()
+                }
+            }
+        }
+        await fulfillment(of: [child], timeout: 3)
+    }
+
     func testOptimisticNullTurnIDRetainsRevisionUntilOwnerAcknowledgesNewTurn() throws {
         var document = DesktopStatusFixtures.state(active: false)
         let previous = try XCTUnwrap((document["turns"] as? [[String: Any]])?.first)
@@ -411,32 +546,37 @@ final class CodexDesktopStatusChannelTests: XCTestCase {
         channel.stop(); let count = revisions.count
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(revisions.count, count, "Late worker callbacks must not recover stopped coverage")
-        XCTAssertTrue(Set(fixture.requests).isSubset(of: ["initialize", "thread-owner-discovery", "thread-follower-read-model-settings"]))
+        XCTAssertEqual(fixture.requests, ["initialize"])
     }
 
-    @MainActor func testDisconnectRevokesCoverageBeforeReconnectAndThreadRemovalUnsubscribes() async throws {
+    @MainActor func testDisconnectRevokesCoverageBeforeReconnectButCatalogueEvictionKeepsLiveSubscription() async throws {
         let fixture = try DesktopStatusSocket(.disconnectOnce); defer { fixture.stop() }
         let channel = CodexDesktopStatusChannel(root: fixture.root)
         let recovered = expectation(description: "reconnected snapshot")
+        let updated = expectation(description: "live patch after catalogue eviction")
         var revisions: [Int64] = [], losses = 0
         channel.start(threads: [DesktopStatusFixtures.thread]) { update in
             switch update {
             case .snapshot(let snapshot):
                 revisions.append(snapshot.revision ?? -1)
                 if snapshot.revision == 2 { recovered.fulfill() }
+                if snapshot.revision == 3 {
+                    XCTAssertEqual(snapshot.title, "Updated after eviction")
+                    updated.fulfill()
+                }
             case .unavailable(_, let ids): if ids.contains(DesktopStatusFixtures.thread) { losses += 1 }
             }
         }
         await fulfillment(of: [recovered], timeout: 5)
         XCTAssertEqual(Array(revisions.prefix(2)), [1, 2])
         XCTAssertGreaterThanOrEqual(losses, 1)
+        let before = losses
         channel.updateThreads([])
-        try await Task.sleep(nanoseconds: 400_000_000)
-        XCTAssertGreaterThanOrEqual(losses, 2)
-        let request = AgentMessageRequest(id: UUID(), sessionID: CodexAgentState.id(DesktopStatusFixtures.thread), turnID: "fixture-turn", mode: .steer, text: "No mutation")
-        let result = await channel.send(request)
-        XCTAssertEqual(result, .failed)
+        try fixture.sendPatches([["op": "replace", "path": ["title"], "value": "Updated after eviction"]], base: 2, revision: 3)
+        await fulfillment(of: [updated], timeout: 3)
+        XCTAssertEqual(losses, before, "Leaving the recent candidate window does not end a live session")
         channel.stop()
+        XCTAssertEqual(losses, before + 1)
     }
 
     func testReadonlyProtocolShapesRejectWrongOwnerAndNeverUseBuildIdentity() {

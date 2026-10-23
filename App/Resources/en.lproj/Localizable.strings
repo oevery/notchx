@@ -954,7 +954,13 @@
 "Message is too long. Limit: 32 KB." = "Message is too long. Limit: 32 KB.";
 "Message delivery unavailable. Open the original session to continue." = "Message delivery unavailable. Open the original session to continue.";
 
-"Recent sessions" = "Recent sessions";
+"Idle sessions" = "Idle sessions";
+"Idle" = "Idle";
+"No active sessions" = "No active sessions";
+"No live Codex sessions" = "No live Codex sessions";
+"%d live sessions" = "%d live sessions";
+"Only sessions confirmed by a live source are shown." = "Only sessions confirmed by a live source are shown.";
+"No live session has been confirmed. Open a Codex chat or check the connection in Agent settings." = "No live session has been confirmed. Open a Codex chat or check the connection in Agent settings.";
 
 "The installed helper matches this app." = "The installed helper matches this app.";
 

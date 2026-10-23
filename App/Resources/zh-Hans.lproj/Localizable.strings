@@ -954,7 +954,13 @@
 "Message is too long. Limit: 32 KB." = "消息过长，最多 32 KB。";
 "Message delivery unavailable. Open the original session to continue." = "暂时无法发送，请打开原会话继续。";
 
-"Recent sessions" = "最近会话";
+"Idle sessions" = "空闲会话";
+"Idle" = "空闲";
+"No active sessions" = "暂无活跃会话";
+"No live Codex sessions" = "暂无实时连接的 Codex 会话";
+"%d live sessions" = "%d 个实时会话";
+"Only sessions confirmed by a live source are shown." = "仅展示实时来源已确认的会话。";
+"No live session has been confirmed. Open a Codex chat or check the connection in Agent settings." = "尚未确认实时会话。请在 Codex 中打开会话，或在智能体设置中检查连接。";
 
 "The installed helper matches this app." = "已安装的 Hook 助手与当前应用一致。";
 

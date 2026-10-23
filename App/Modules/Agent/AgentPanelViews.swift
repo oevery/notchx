@@ -57,10 +57,10 @@ struct AgentCompactCountView: View {
     @ObservedObject private var manager = AgentManager.shared
     var body: some View {
         Button { manager.showSessionList(); appState.presentFullExpandedModule(.agent) } label: {
-            CompactSlotCount(count: manager.liveGroups.count)
+                CompactSlotCount(count: manager.activeGroups.count)
         }
-        .buttonStyle(.plain).help(L10n.format("%d sessions", manager.liveGroups.count))
-        .accessibilityLabel(L10n.format("%d sessions", manager.liveGroups.count))
+        .buttonStyle(.plain).help(L10n.format("%d sessions", manager.activeGroups.count))
+        .accessibilityLabel(L10n.format("%d sessions", manager.activeGroups.count))
         .accessibilityIdentifier("agent-compact-count")
     }
 }
@@ -74,7 +74,8 @@ struct AgentExpandedView: View {
     var body: some View {
         if let group = manager.currentGroup {
             HStack { AgentBrandIcon(); Text(verbatim: group.root.title).lineLimit(1); Spacer(); Text(verbatim: group.status.displayName).font(.caption).foregroundStyle(.secondary) }
-        } else { AgentUnavailableView(connection: manager.connection, isIntegrationEnabled: manager.isCodexActive) }
+        } else if !manager.idleGroups.isEmpty { Text(L10n.text("No active sessions")) }
+        else { AgentUnavailableView(connection: manager.connection, isIntegrationEnabled: manager.isCodexActive) }
     }
 }
 
@@ -86,7 +87,7 @@ struct AgentFullExpandedView: View {
     @State private var hoveringList = false
     @State private var expandedPlan: AgentSessionID?
     @State private var expandedChildren: AgentSessionID?
-    @State private var showsRecentSessions = false
+    @State private var showsIdleSessions = false
     @FocusState private var focusedRow: AgentSessionID?
 
     init(manager: AgentManager? = nil) { self.manager = manager ?? .shared }
@@ -170,10 +171,10 @@ struct AgentFullExpandedView: View {
 
     @ViewBuilder private var navigation: some View {
         HStack(spacing: 8) {
-            if manager.panel.route != .sessions || !manager.panel.prefersSessionList && manager.defaultDetailGroup != nil && !manager.recentGroups.isEmpty {
+            if manager.panel.route != .sessions {
                 Button { manager.showSessionList() } label: { Label("Back to sessions", systemImage: "chevron.left") }
                     .buttonStyle(.plain).foregroundStyle(.secondary).font(.caption)
-            } else if manager.liveGroups.count > 1 { Text(L10n.format("%d sessions", manager.liveGroups.count)).font(.caption).foregroundStyle(.secondary) }
+            } else if manager.activeGroups.count > 1 { Text(L10n.format("%d sessions", manager.activeGroups.count)).font(.caption).foregroundStyle(.secondary) }
             Spacer()
             if !manager.interaction.approvals.isEmpty, !showingApproval {
                 Button { if let first = manager.interaction.approvals.first { manager.showApproval(first.id) } } label: {
@@ -186,16 +187,17 @@ struct AgentFullExpandedView: View {
 
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 4) {
-            sessionRows(manager.liveGroups)
-            if !manager.recentGroups.isEmpty {
-                IslandDisclosureButton(expanded: showsRecentSessions, action: { showsRecentSessions.toggle() }) {
-                    Text(L10n.text("Recent sessions"))
+            sessionRows(manager.defaultGroups)
+            if manager.defaultGroups.isEmpty { Text(L10n.text("No active sessions")).font(.callout).foregroundStyle(.secondary) }
+            if !manager.idleGroups.isEmpty {
+                IslandDisclosureButton(expanded: showsIdleSessions, action: { showsIdleSessions.toggle() }) {
+                    Text(L10n.text("Idle sessions"))
                 }
                     .font(.callout).foregroundStyle(.secondary)
                     .padding(.vertical, 5)
-                .accessibilityIdentifier("agent-toggle-recent")
-                if showsRecentSessions {
-                    sessionRows(manager.recentGroups)
+                .accessibilityIdentifier("agent-toggle-idle")
+                if showsIdleSessions {
+                    sessionRows(manager.idleGroups)
                         .transition(.opacity.animation(motion.content))
                 }
             }

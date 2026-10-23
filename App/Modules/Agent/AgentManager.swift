@@ -29,6 +29,7 @@ final class AgentManager: ObservableObject {
     private let preferenceStore: UserDefaults?
     private var source: AgentStatusSource?
     private var store = AgentSessionStore()
+    @Published private var recentCompletedIDs: [AgentSessionID] = []
     private var generation = UUID()
 
     init(
@@ -102,7 +103,17 @@ final class AgentManager: ObservableObject {
     var lifecycleGeneration: UUID { generation }
 
     func receive(_ event: AgentSessionEvent, generation expectedGeneration: UUID) {
+        let previous = store.sessions[event.id]
         guard isCodexActive, connection == .connected, expectedGeneration == generation, store.ingest(event) else { return }
+        if event.classification == .userSession, event.parentID == nil {
+            if !event.status.isTerminal { recentCompletedIDs.removeAll { $0 == event.id } }
+            else if let previous, previous.status == .running || previous.status.isWaiting,
+                    interaction.liveSessionIDs.contains(event.id) {
+                recentCompletedIDs.removeAll { $0 == event.id }
+                recentCompletedIDs.insert(event.id, at: 0)
+                recentCompletedIDs = Array(recentCompletedIDs.prefix(3))
+            }
+        }
         publishSnapshot()
     }
 
@@ -131,15 +142,16 @@ final class AgentManager: ObservableObject {
         case .interaction(let snapshot):
             guard interaction != snapshot else { return }
             interaction = snapshot
+            recentCompletedIDs.removeAll { !snapshot.liveSessionIDs.contains($0) }
             reconcilePanel()
         }
     }
 
     var currentGroup: AgentSessionGroup? {
-        groups.first { $0.id == selectedSessionID }
-            ?? groups.first { $0.status.isWaiting }
-            ?? groups.first { interaction.liveSessionIDs.contains($0.id) && $0.status == .running }
-            ?? groups.first
+        activeGroups.first { $0.id == selectedSessionID }
+            ?? activeGroups.first { $0.status.isWaiting }
+            ?? activeGroups.first
+            ?? recentCompletedGroups.first
     }
 
     func selectSession(_ id: AgentSessionID) {
@@ -156,12 +168,22 @@ final class AgentManager: ObservableObject {
     var liveGroups: [AgentSessionGroup] {
         presentationGroups.filter { interaction.liveSessionIDs.contains($0.id) }
     }
-    var recentGroups: [AgentSessionGroup] {
-        presentationGroups.filter { !interaction.liveSessionIDs.contains($0.id) }
+    var activeGroups: [AgentSessionGroup] {
+        liveGroups.filter { !$0.status.isTerminal && $0.status != .idle }
+    }
+    var idleGroups: [AgentSessionGroup] {
+        liveGroups.filter { ($0.status.isTerminal || $0.status == .idle) && !recentCompletedIDs.contains($0.id) }
+    }
+    var recentCompletedGroups: [AgentSessionGroup] {
+        let byID = Dictionary(uniqueKeysWithValues: liveGroups.map { ($0.id, $0) })
+        return recentCompletedIDs.compactMap { byID[$0] }.filter { $0.status.isTerminal }
+    }
+    var defaultGroups: [AgentSessionGroup] {
+        activeGroups + recentCompletedGroups
     }
     var defaultDetailGroup: AgentSessionGroup? {
-        let live = liveGroups
-        return live.count == 1 ? live.first : groups.count == 1 ? groups.first : nil
+        let active = defaultGroups
+        return active.count == 1 && idleGroups.isEmpty ? active.first : nil
     }
 
     func showSessionList() { panel.prefersSessionList = true; panel.route = .sessions }
@@ -258,6 +280,7 @@ final class AgentManager: ObservableObject {
 
     private func publishSnapshot() {
         let nextGroups = store.groups
+        recentCompletedIDs.removeAll { store.sessions[$0] == nil }
         let nextAttentionCount = store.attentionCount
         guard groups != nextGroups || attentionCount != nextAttentionCount else { return }
         groups = nextGroups
