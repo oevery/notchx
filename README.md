@@ -12,7 +12,7 @@
 
 无需 XcodeGen、Node 或插件安装步骤。模块随应用编译，不支持动态插件商店。上游遥测和自动更新已停用；天气和主动启用的集成仍可能使用网络。
 
-当前版本从 **0.1.0（1）** 开始，由 **oevery** 维护；版本与版权统一配置在 `Config/Version.xcconfig`。Xcode 普通运行默认使用临时签名，重新构建后可能需要重新授权。本地打包与手动 Release CI 使用同一张固定自签证书，不需要 Apple 开发者账户；私钥只保存在仓库外或 CI Secrets。详见 [发布准备与签名](docs/RELEASE.md)。
+当前版本从 **0.1.0（1）** 开始，由 **oevery** 维护；版本与版权统一配置在 `Config/Version.xcconfig`。Xcode 普通运行默认使用临时签名，重新构建后可能需要重新授权。本地打包与 Release CI 使用同一张固定自签证书，不需要 Apple 开发者账户；私钥只保存在仓库外或 CI Secrets。详见 [发布准备与签名](docs/RELEASE.md)。
 
 ## 功能与边界
 
@@ -24,6 +24,10 @@
 - **Agent**：默认关闭，连接已有 Codex Desktop 或 CLI daemon 的原会话，展示活动、计划、子代理、问题和受支持审批。运行中默认“引导”，可“排队”，结束后可“发送”；能力不可用时禁用操作，结果不确定时保留草稿、不自动重发。Hooks 是默认关闭的可选后备，不会因启用 Agent 自动安装或获信任。详见 [Agent 接入](docs/AGENT.md)。
 
 MediaRemoteAdapter 使用 macOS 私有媒体接口，已明确保留，但无法保证未来系统或每个播放器的兼容性。浏览器自动化片段和媒体 Perl 辅助程序属于原生集成，不是插件运行时。
+
+## 发布说明
+
+支持 macOS 26+；Apple Silicon 下载 arm64，Intel 下载 x86_64。打开 DMG，将应用拖入 Applications。固定自签、未经 Apple 公证，首次打开可能被系统拦截；权限按需授予。
 
 ## 开发与验证
 
@@ -45,7 +49,7 @@ mise run build
 
 应用分别位于 `build/arm64/NotchX.app` 和 `build/x86_64/NotchX.app`，带版本号与架构的 DMG、校验和及构建说明位于 `build/release/`。Apple Silicon 选择 arm64，Intel 选择 x86_64；DMG 中将应用拖入 Applications 即可安装。这些是固定自签、未经 Apple 公证的产物，不保证默认 Gatekeeper 放行或升级时所有权限自动保留。构建脚本不会安装或启动应用，不会修改系统信任与安全设置。
 
-增加或删除原生 Swift 文件后，运行 `python3 scripts/generate-xcode-project.py` 并检查工程差异。测试分组在 `TestPlans/Groups.json` 维护；默认 Core，DesktopUI 仅显式运行。GitHub Actions 仅手动执行快速检查、签名打包和产物验证，不运行 XCTest。发布前分别确认同一提交的核心自动测试、涉及的 UI 回归和人工验收；核心通过不代表桌面 UI 已验证。详见 [开发与验证](docs/DEVELOPMENT.md) 和 [验收清单](docs/ACCEPTANCE.md)。
+增加或删除原生 Swift 文件后，运行 `python3 scripts/generate-xcode-project.py` 并检查工程差异。测试分组在 `TestPlans/Groups.json` 维护；默认 Core，DesktopUI 仅显式运行。CI 支持手动验证及 Release 发布触发，不运行 XCTest；仅发布事件在双架构验证成功后上传附件，修改发布说明不重建。发布前分别确认同一提交的核心自动测试、涉及的 UI 回归和人工验收；核心通过不代表桌面 UI 已验证。详见 [开发与验证](docs/DEVELOPMENT.md) 和 [验收清单](docs/ACCEPTANCE.md)。
 
 ## 目录与文档
 

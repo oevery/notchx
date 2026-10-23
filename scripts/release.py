@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
 CERTIFICATE = ROOT / "Config/Signing/NotchX.cer"
@@ -68,6 +69,85 @@ def artifact_name(meta, arch):
     if arch not in ARCHITECTURES:
         raise ValueError("不支持的发布架构")
     return f"NotchX-{meta['version']}-{meta['build']}-{arch}"
+
+
+def ci_context():
+    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REPOSITORY") != "oevery/notchx":
+        raise ValueError("此入口只允许 oevery/notchx 的 GitHub Actions 调用")
+    commit = run(["git", "rev-parse", "HEAD"]).decode().strip()
+    if commit != os.environ.get("GITHUB_SHA"):
+        raise ValueError("检出的提交与触发事件不一致")
+    run(["git", "merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"])
+    meta = metadata()
+    context = {**meta, "commit": commit, "tag": "", "release_id": ""}
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    if event_name == "workflow_dispatch":
+        if os.environ.get("GITHUB_REF") != "refs/heads/main":
+            raise ValueError("手动验证只允许 main 分支")
+        return context
+    if event_name != "release":
+        raise ValueError("不支持的 CI 事件")
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    release = event.get("release", {})
+    tag = release.get("tag_name")
+    if event.get("action") != "published" or release.get("draft") is not False:
+        raise ValueError("只处理已发布 Release，不处理编辑或草稿事件")
+    if tag != f"v{meta['version']}" or os.environ.get("GITHUB_REF") != f"refs/tags/{tag}":
+        raise ValueError("Release tag 必须与项目版本完全一致")
+    if run(["git", "rev-parse", f"refs/tags/{tag}^{{commit}}"]).decode().strip() != commit:
+        raise ValueError("Release tag 已移动或指向其他提交")
+    release_id = release.get("id")
+    if type(release_id) is not int or release_id <= 0:
+        raise ValueError("Release ID 无效")
+    return {**context, "tag": tag, "release_id": str(release_id)}
+
+
+def publish_assets(directory):
+    context = ci_context()
+    if not context["release_id"]:
+        raise ValueError("手动验证不能上传 Release 附件")
+    if context["commit"] != os.environ.get("NOTCHX_EXPECTED_COMMIT"):
+        raise ValueError("发布任务与构建任务的提交不一致")
+    assets = []
+    for arch in ARCHITECTURES:
+        name = artifact_name(context, arch)
+        archive = directory / f"{name}.dmg"
+        report_path = directory / f"{name}.json"
+        checksum_path = directory / f"{name}.dmg.sha256"
+        report = json.loads(report_path.read_text())
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        expected = {"version": context["version"], "build": context["build"],
+                    "source_commit": context["commit"], "architectures": [arch],
+                    "archive": archive.name, "sha256": digest,
+                    "certificate_sha1": certificate_fingerprint(), "signing": "fixed-self-signed"}
+        if any(report.get(key) != value for key, value in expected.items()) or report.get("source_dirty") is not False:
+            raise ValueError(f"构建报告与发布上下文不一致: {name}")
+        if checksum_path.read_text().strip() != f"{digest}  {archive.name}":
+            raise ValueError(f"DMG 校验和不一致: {name}")
+        verify_dmg(archive, context, arch)
+        assets.extend([archive, checksum_path, report_path])
+    endpoint = f"repos/oevery/notchx/releases/{context['release_id']}"
+    current = json.loads(run(["gh", "api", endpoint]))
+    if current.get("tag_name") != context["tag"] or current.get("draft") is not False:
+        raise ValueError("目标 Release 已变更，拒绝上传")
+    pages = json.loads(run(["gh", "api", "--paginate", "--slurp", endpoint + "/assets?per_page=100"]))
+    existing = {asset["name"]: asset for page in pages for asset in page}
+    pending = []
+    # 先核对所有附件，避免有冲突时上传半套；不覆盖同名附件。
+    for asset in assets:
+        digest = "sha256:" + hashlib.sha256(asset.read_bytes()).hexdigest()
+        if asset.name in existing:
+            if existing[asset.name].get("digest") != digest or existing[asset.name].get("state") != "uploaded":
+                raise ValueError(f"同名 Release 附件不同或未完成，拒绝覆盖: {asset.name}")
+        else:
+            pending.append(asset)
+    for asset in pending:
+        url = f"https://uploads.github.com/{endpoint}/assets?name={quote(asset.name)}"
+        uploaded = json.loads(run(["gh", "api", "--method", "POST", url, "-H", "Content-Type: application/octet-stream", "--input", asset]))
+        if (uploaded.get("state") != "uploaded" or uploaded.get("name") != asset.name
+            or uploaded.get("digest") != "sha256:" + hashlib.sha256(asset.read_bytes()).hexdigest()):
+            raise ValueError(f"上传后的附件状态或校验和不一致: {asset.name}")
+    print("两份 DMG、校验和及构建报告已上传（相同附件跳过）；未创建或编辑 Release/tag。")
 
 
 def require_external(path):
@@ -351,12 +431,16 @@ def build(directory, arch="arm64"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["metadata", "init-identity", "build", "verify"])
+    parser.add_argument("command", choices=["metadata", "init-identity", "build", "verify", "ci-context", "publish-assets"])
+    parser.add_argument("--artifacts", type=Path, default=ROOT / "build/release")
     parser.add_argument("--identity-directory", type=Path, default=PRIVATE_DIRECTORY)
     parser.add_argument("--arch", choices=ARCHITECTURES, help="目标架构；build 不指定时依次构建两份 DMG")
     parser.add_argument("--app", type=Path)
     parser.add_argument("--dmg", type=Path)
     args = parser.parse_args()
+    if args.command == "ci-context":
+        print(json.dumps(ci_context()))
+        return
     if args.command == "metadata":
         meta = metadata()
         print(json.dumps({**meta, **({"artifact": artifact_name(meta, args.arch)} if args.arch else {})}))
@@ -364,6 +448,8 @@ def main():
     run(["bash", ROOT / "scripts/require-macos.sh"], capture=False)
     if args.command == "init-identity":
         initialize_identity(args.identity_directory)
+    elif args.command == "publish-assets":
+        publish_assets(args.artifacts.resolve())
     elif args.command == "build":
         for arch in ([args.arch] if args.arch else ARCHITECTURES):
             build(args.identity_directory, arch)

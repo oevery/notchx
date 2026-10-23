@@ -179,7 +179,6 @@
 "Copy Path" = "复制路径";
 "Copy Text" = "复制文本";
 "Copy meeting link" = "复制会议链接";
-"Couldn't build the mascot download URL." = "无法生成吉祥物下载链接。";
 "Current forecast will appear here." = "当前天气预报将显示在这里。";
 "Debug" = "调试";
 "Delivered notification scan" = "已送达通知扫描";
@@ -282,7 +281,6 @@
 "Low Power" = "省电模式";
 "Low Power suggestions" = "省电模式建议";
 "Manual" = "手动";
-"Mascot" = "吉祥物";
 "Matched %@" = "已匹配 %@";
 "Media" = "媒体";
 "Media & HUD" = "媒体与状态提示";
@@ -408,7 +406,6 @@
 "Show in Finder" = "在访达中显示";
 "Show in screen recordings" = "在屏幕录制中显示";
 "Show island on" = "显示灵动岛的位置";
-"Show mascot in Pomodoro" = "在番茄钟中显示吉祥物";
 "Show menu bar icon" = "显示菜单栏图标";
 "Show on all Spaces" = "在所有空间中显示";
 "Show previews" = "显示预览";
@@ -450,8 +447,6 @@
 "Test" = "测试";
 "Text snippet" = "文本片段";
 "The last known track is kept here briefly." = "最近播放的曲目会在此暂时保留。";
-"The mascot service returned HTTP %d." = "吉祥物服务返回 HTTP %d。";
-"The mascot template response couldn't be read." = "无法读取吉祥物模板响应。";
 "This will reset all NotchX settings to their defaults." = "这会将 NotchX 的所有设置恢复为默认值。";
 "Thunderstorm" = "雷雨";
 "Today" = "今天";

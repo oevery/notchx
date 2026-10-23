@@ -4,6 +4,7 @@ import base64
 import contextlib
 import io
 import itertools
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,111 @@ class ReleaseTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="notchx-release-test-")
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
+
+    def test_ci_context_accepts_only_main_manual_or_matching_published_tag(self):
+        sha = 'a' * 40
+        tag = 'v' + release.metadata()['version']
+        event_path = self.directory / 'event.json'
+        baseline = {"action": "published", "release": {"id": 123, "tag_name": tag, "draft": False}}
+        environment = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "oevery/notchx",
+                       "GITHUB_SHA": sha, "GITHUB_EVENT_NAME": "release",
+                       "GITHUB_REF": f"refs/tags/{tag}", "GITHUB_EVENT_PATH": str(event_path)}
+        cases = [({}, {}, {}, True),
+                 ({"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main"}, {}, {}, True),
+                 ({"GITHUB_EVENT_NAME": "workflow_dispatch"}, {}, {}, False),
+                 ({"GITHUB_EVENT_NAME": "push"}, {}, {}, False),
+                 ({"GITHUB_REPOSITORY": "other/notchx"}, {}, {}, False),
+                 ({"GITHUB_SHA": 'b' * 40}, {}, {}, False),
+                 ({}, {"action": "edited"}, {}, False),
+                 ({}, {}, {"draft": True}, False),
+                 ({}, {}, {"tag_name": "v9.0.0"}, False),
+                 ({}, {}, {"id": 0}, False)]
+        for env_change, event_change, release_change, accepted in cases:
+            event_path.write_text(json.dumps({**baseline, **event_change, "release": {**baseline['release'], **release_change}}))
+            with (self.subTest(env=env_change, event=event_change, release=release_change),
+                  patch.dict(os.environ, {**environment, **env_change}, clear=True),
+                  patch.object(release, "run", return_value=sha.encode()) as execute):
+                if accepted:
+                    context = release.ci_context()
+                    self.assertEqual(context['commit'], sha)
+                    self.assertEqual(bool(context['release_id']), not env_change)
+                    self.assertIn(["git", "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"], [c.args[0] for c in execute.call_args_list])
+                else:
+                    with self.assertRaises(ValueError):
+                        release.ci_context()
+        event_path.write_text(json.dumps(baseline))
+        for failure in ['ancestry', 'moved-tag']:
+            def execute(args, **kwargs):
+                if args[1] == 'merge-base' and failure == 'ancestry':
+                    raise RuntimeError('not on main')
+                return ('b' * 40 if failure == 'moved-tag' and args[-1] != 'HEAD' else sha).encode()
+            with (self.subTest(failure=failure), patch.dict(os.environ, environment, clear=True),
+                  patch.object(release, 'run', side_effect=execute), self.assertRaises((RuntimeError, ValueError))):
+                release.ci_context()
+
+    def publish_fixture(self):
+        context = {**release.metadata(), 'commit': 'a' * 40, 'tag': 'v' + release.metadata()['version'], 'release_id': '123'}
+        files = []
+        for arch in release.ARCHITECTURES:
+            name = release.artifact_name(context, arch)
+            archive = self.directory / (name + '.dmg')
+            archive.write_bytes(b'fixture archive ' + arch.encode())
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksum = self.directory / (name + '.dmg.sha256')
+            checksum.write_text(f'{digest}  {archive.name}\n')
+            report = self.directory / (name + '.json')
+            report.write_text(json.dumps({**context, 'source_commit': context['commit'], 'source_dirty': False,
+                'architectures': [arch], 'archive': archive.name, 'sha256': digest,
+                'certificate_sha1': release.certificate_fingerprint(), 'signing': 'fixed-self-signed'}))
+            files.extend([archive, checksum, report])
+        return context, files
+
+    def test_publish_verifies_both_architectures_and_never_overwrites_conflicting_assets(self):
+        context, files = self.publish_fixture()
+        for mode in ['new', 'identical', 'partial', 'conflict', 'changed-release', 'bad-upload-response']:
+            existing = [{'name': f.name, 'digest': 'sha256:' + hashlib.sha256(f.read_bytes()).hexdigest(), 'state': 'uploaded'} for f in files]
+            if mode in ['new', 'bad-upload-response']: existing = []
+            if mode == 'partial': existing = existing[:2]
+            if mode == 'conflict': existing[-1]['digest'] = 'sha256:wrong'
+            def execute(args, **kwargs):
+                if '--slurp' in args: return json.dumps([existing]).encode()
+                if '--method' in args:
+                    file = args[-1]
+                    return json.dumps({'name': file.name, 'state': 'uploaded',
+                                       'digest': 'wrong' if mode == 'bad-upload-response' else 'sha256:' + hashlib.sha256(file.read_bytes()).hexdigest()}).encode()
+                return json.dumps({'tag_name': 'v9.0.0' if mode == 'changed-release' else context['tag'], 'draft': False}).encode()
+            with (self.subTest(mode=mode), patch.object(release, 'ci_context', return_value=context),
+                  patch.dict(os.environ, {'NOTCHX_EXPECTED_COMMIT': context['commit']}),
+                  patch.object(release, 'verify_dmg') as verify, patch.object(release, 'run', side_effect=execute) as api,
+                  contextlib.redirect_stdout(io.StringIO())):
+                if mode in ['conflict', 'changed-release', 'bad-upload-response']:
+                    with self.assertRaises(ValueError): release.publish_assets(self.directory)
+                else:
+                    release.publish_assets(self.directory)
+                self.assertEqual(verify.call_count, 2)
+                uploads = [c.args[0] for c in api.call_args_list if '--method' in c.args[0]]
+                self.assertEqual(len(uploads), {'new': 6, 'partial': 4, 'bad-upload-response': 1}.get(mode, 0))
+                for command in uploads:
+                    self.assertEqual(command[3], 'POST')
+                    self.assertTrue(command[4].startswith('https://uploads.github.com/repos/oevery/notchx/releases/123/assets?name='))
+
+    def test_publish_rejects_manual_missing_or_invalid_artifacts_before_remote_writes(self):
+        for failure in ['manual', 'wrong-job-commit', 'missing-intel', 'dirty', 'wrong-report-commit', 'checksum', 'invalid-signature']:
+            context, files = self.publish_fixture()
+            if failure == 'manual': context['release_id'] = ''
+            if failure == 'missing-intel': files[3].unlink()
+            if failure in ['dirty', 'wrong-report-commit']:
+                report = json.loads(files[5].read_text())
+                report.update({'source_dirty': True} if failure == 'dirty' else {'source_commit': 'b' * 40})
+                files[5].write_text(json.dumps(report))
+            if failure == 'checksum': files[4].write_text('wrong')
+            with (self.subTest(failure=failure), patch.object(release, 'ci_context', return_value=context),
+                  patch.dict(os.environ, {'NOTCHX_EXPECTED_COMMIT': 'b' * 40 if failure == 'wrong-job-commit' else context['commit']}),
+                  patch.object(release, 'verify_dmg', side_effect=RuntimeError('bad signature') if failure == 'invalid-signature' else None),
+                  patch.object(release, 'run') as api):
+                with self.assertRaises((ValueError, OSError, RuntimeError)):
+                    release.publish_assets(self.directory)
+                api.assert_not_called()
 
     def test_single_metadata_source_controls_archive_name_and_bundle_placeholders(self):
         original = (release.ROOT / "Config/Version.xcconfig").read_text()

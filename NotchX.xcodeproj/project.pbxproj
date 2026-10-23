@@ -217,46 +217,6 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "636631D2B0345BB975D7F465";
 		};
-		"139A7C8F0CCCECD004A2F470" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"path" = "App/Mascot/MascotConfig.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"2AC7347331A0D513907F5CB5" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = "139A7C8F0CCCECD004A2F470";
-		};
-		"1209E8D82549AD672319CBD1" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"path" = "App/Mascot/MascotManager.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"68CDDF547A00E43A784CF089" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = "1209E8D82549AD672319CBD1";
-		};
-		"637FA2AED1A81F880E84962B" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"path" = "App/Mascot/MascotVideoCache.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"2E5F4DEBCA2490FFF5E1BCF5" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = "637FA2AED1A81F880E84962B";
-		};
-		"77E436EBB2B7957B079A4E98" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"path" = "App/Mascot/MascotView.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"A8B13DF014D32459B6AA4FA1" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = "77E436EBB2B7957B079A4E98";
-		};
 		"F347D965A201E20426908D09" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -1610,10 +1570,6 @@
 				"F49243C37E972F341B5F7E85",
 				"E98DE707F846FAD3C5B046C2",
 				"636631D2B0345BB975D7F465",
-				"139A7C8F0CCCECD004A2F470",
-				"1209E8D82549AD672319CBD1",
-				"637FA2AED1A81F880E84962B",
-				"77E436EBB2B7957B079A4E98",
 				"F347D965A201E20426908D09",
 				"88003025C6FEC6786785A375",
 				"6A2D59346C7585EDFE0E5FF5",
@@ -1773,10 +1729,6 @@
 				"8859BAEADD63C70733966BD5",
 				"D77EDF4BE86CCD69B5858AF5",
 				"8B89FB3FB5531AF3DD69ED5E",
-				"2AC7347331A0D513907F5CB5",
-				"68CDDF547A00E43A784CF089",
-				"2E5F4DEBCA2490FFF5E1BCF5",
-				"A8B13DF014D32459B6AA4FA1",
 				"8D15BDDFA9BD9B6F5F62FE7B",
 				"667A0CE35722DF9361D4F238",
 				"18C9F7B9C4AD79C1AB557546",

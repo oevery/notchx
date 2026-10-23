@@ -35,19 +35,23 @@ mise run verify -- --arch x86_64
 
 产物位于 `build/release/`：`NotchX-0.1.0-1-arm64.dmg`（Apple Silicon）和 `NotchX-0.1.0-1-x86_64.dmg`（Intel），各附 `.dmg.sha256` 与 `.json`。JSON 记录版本、作者、证书指纹、目标架构、源码提交及脏工作区标记，明确标记未公证。DMG 包含应用与 `/Applications` 安装链接；创建后校验镜像、只读挂载且禁止自动打开窗口，再验证资源、许可证、架构、版本和签名，成功或验证失败均卸载。可用 `python3 scripts/release.py verify --arch arm64 --dmg build/release/NotchX-0.1.0-1-arm64.dmg` 复验。旧 Universal／ZIP 不再生成或上传；DMG 不改变自签、公证和 Gatekeeper 限制。
 
-## 手动 Release CI 与 Secrets
+## Release CI 与 Secrets
+
+触发方式：main 分支的 `workflow_dispatch` 仅验证；`release: published` 在发布正式版或预发布版时打包并向该 Release 上传附件。不监听 tag push、Release 编辑或草稿保存，因此修改标题／说明不重建。Release 页面先公开，附件在构建成功后出现；失败时页面可能暂时没有附件。
+
+发布前先将本工作流合入 main，再基于已验收提交创建 `v<版本号>` 的 Release。无密钥预检要求 tag 与 `Config/Version.xcconfig` 完全一致，指向事件提交且该提交属于 origin/main 历史；不接受版本后缀或移动 tag。所有后续任务使用预检锁定的提交。
 
 CI 通过任务级 `DEVELOPER_DIR` 固定镜像中已验证的稳定版 Xcode 26.6，不改变本机配置；镜像移除该版本时应明确升级并重新验证，不静默切换到预览版。
 
 CI 的 mise-action 固定 SHA 与 mise 2026.10.17，只在临时 runner 中安装 `mise.toml` 声明的工具；通过 `mise run check` 和 `mise run build -- --arch <架构>` 与本地共享入口。工具缓存仅包含临时 `notchx-tools` 目录，不含签名私钥；`check` 额外验证工作流语法与内嵌媒体来源哈希。
 
-`.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。`arm64`／`x86_64` 两项矩阵均使用 `macos-26`，分别运行 `scripts/test.sh --checks-only`（工程、资源、本地化、版本快速检查），通过后才读取签名凭据，构建 Release、签名、打包并验证挂载产物；所有步骤绑定同一次触发的精确提交。一项失败不取消另一项，以保留诊断。不运行 XCTest 或完整测试工具自测，也不分流到 Linux。交叉编译及验签不等于 Intel 真机运行验收。Actions 使用最新已验证稳定版并固定完整 SHA；升级须检查兼容性，不追踪浮动 main。日志记录 Xcode／SDK／Swift 版本，不引入 Beta 工具链。
+仅允许 `oevery/notchx`。预检通过后，`arm64`／`x86_64` 两项矩阵均使用 `macos-26`，分别完成快速检查、签名探针、构建、签名及 DMG 挂载验证。一项失败不取消另一项，但上传任务必须等待两项都成功。不运行 XCTest 或完整测试工具自测，也不分流到 Linux；交叉编译不等于 Intel 真机验收。Actions 固定稳定版完整 SHA，日志记录实际工具链版本。
 
 CI 编译缓存仅允许 `build/DerivedData-<架构>/` 下的 `ModuleCache.noindex`、`SDKStatCaches.noindex` 和 `Build/Intermediates.noindex`，不缓存 `Build/Products`、签名应用、`build/release`、私钥目录或临时钥匙串。缓存键包含 runner 系统／架构、macOS build、Xcode build、SDK build、Release 目标架构和构建输入摘要；仅在相同工具链、相同目标架构前缀内回退恢复。恢复后仍由 Xcode 判断需要重编译的内容，不承诺与本地热增量完全相同。缓存仅在成功运行后保存，首次没有缓存属于正常情况。
 
 测试由本地负责：发布前对准备触发 CI 的同一个干净提交运行不带筛选参数的 `--full`（Core 加工具自测），保留提交 SHA 与 `.xcresult`；若代码变化，重新验证受影响内容及发布前核心测试。窗口和焦点回归须另行显式运行 `--ui`，视觉和真实权限按人工验收清单执行，分别记录已验证／未验证。CI 不自动证明本地测试已通过，核心通过不等于 UI 或真机验收完成，打包成功也不是完整测试通过；首次构建耗时仍须独立观察。
 
-请在仓库创建 **`release-signing` Environment**，限制为 `main` 分支，并在可用时启用人工审批。该 Environment 配置两个 Secrets：
+仓库 **`release-signing` Environment** 只允许 `main` 分支与 `v*.*.*` tag，并在可用时启用人工审批。tag 通配符只是环境入口，版本格式及 main 归属由前置任务严格校验。该 Environment 配置两个 Secrets：
 
 | Secret | 内容 |
 | --- | --- |
@@ -63,7 +67,9 @@ base64 < "$HOME/.local/share/notchx/signing/identity.p12" | gh secret set NOTCHX
 gh secret set NOTCHX_SIGNING_P12_PASSWORD --repo oevery/notchx --env release-signing < "$HOME/.local/share/notchx/signing/signing.password"
 ```
 
-CI 缺少 Secrets、凭据不完整或指纹不符都会失败，绝不降级为 ad-hoc 或无签名包。工作流仅有读取仓库权限。每份 DMG 用 `upload-artifact` 的 `archive: false` 单独上传，直接下载而不套 ZIP；校验和及 JSON 放在独立的 `-verification` 资料包中，保留 14 天。**不创建标签、GitHub Release，不推送提交，不执行公证**。Release 指发布准备流程，不表示已经公开发布。
+CI 缺少 Secrets、凭据不完整或指纹不符都会失败，不降级为 ad-hoc 或无签名包。预检与构建仅有仓库读取权限；仅发布事件的上传任务获得 `contents: write`，且不接触签名私钥。它重新校验两份 DMG 的签名、架构、提交、来源记录和校验和，再上传 DMG、校验和及 JSON。手动验证不会运行上传任务。
+
+CI 产物仍保留 14 天，每份 DMG 直接下载、不套 ZIP，验证资料单独保存。上传目标固定为触发事件的 Release ID，不创建或编辑 Release/tag。同名附件内容相同则跳过，不同或未上传完成则报错，不覆盖；上传途中失败可重跑失败的上传任务，复用同次构建产物。若重跑构建造成文件不同，须人工处理冲突。修改 Release 说明无需重跑 CI。
 
 ## 分发与权限限制
 

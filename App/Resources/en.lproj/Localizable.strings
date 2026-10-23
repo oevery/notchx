@@ -179,7 +179,6 @@
 "Copy Path" = "Copy Path";
 "Copy Text" = "Copy Text";
 "Copy meeting link" = "Copy meeting link";
-"Couldn't build the mascot download URL." = "Couldn't build the mascot download URL.";
 "Current forecast will appear here." = "Current forecast will appear here.";
 "Debug" = "Debug";
 "Delivered notification scan" = "Delivered notification scan";
@@ -282,7 +281,6 @@
 "Low Power" = "Energy saver";
 "Low Power suggestions" = "Energy saver suggestions";
 "Manual" = "Manual";
-"Mascot" = "Mascot";
 "Matched %@" = "Matched %@";
 "Media" = "Media";
 "Media & HUD" = "Media & HUD";
@@ -408,7 +406,6 @@
 "Show in Finder" = "Show in Finder";
 "Show in screen recordings" = "Show in screen recordings";
 "Show island on" = "Island display";
-"Show mascot in Pomodoro" = "Show mascot in Pomodoro";
 "Show menu bar icon" = "Show menu bar icon";
 "Show on all Spaces" = "Show on all Spaces";
 "Show previews" = "Show previews";
@@ -450,8 +447,6 @@
 "Test" = "Test";
 "Text snippet" = "Text snippet";
 "The last known track is kept here briefly." = "The last known track is kept here briefly.";
-"The mascot service returned HTTP %d." = "The mascot service returned HTTP %d.";
-"The mascot template response couldn't be read." = "The mascot template response couldn't be read.";
 "This will reset all NotchX settings to their defaults." = "This will reset all NotchX settings to their defaults.";
 "Thunderstorm" = "Thunderstorm";
 "Today" = "Today";
