@@ -11,10 +11,10 @@
 ## 本地打包
 
 ```sh
-bash scripts/test.sh --full -resultBundlePath build/pre-release.xcresult
-python3 scripts/release.py build
-python3 scripts/release.py verify --arch arm64
-python3 scripts/release.py verify --arch x86_64
+mise run test:full -- -resultBundlePath build/pre-release.xcresult
+mise run build
+mise run verify -- --arch arm64
+mise run verify -- --arch x86_64
 ```
 
 固定身份已在首次配置时创建，默认私密目录为 `~/.local/share/notchx/signing/`，不在仓库内：
@@ -38,6 +38,8 @@ python3 scripts/release.py verify --arch x86_64
 ## 手动 Release CI 与 Secrets
 
 CI 通过任务级 `DEVELOPER_DIR` 固定镜像中已验证的稳定版 Xcode 26.6，不改变本机配置；镜像移除该版本时应明确升级并重新验证，不静默切换到预览版。
+
+CI 的 mise-action 固定 SHA 与 mise 2026.10.17，只在临时 runner 中安装 `mise.toml` 声明的工具；通过 `mise run check` 和 `mise run build -- --arch <架构>` 与本地共享入口。工具缓存仅包含临时 `notchx-tools` 目录，不含签名私钥；`check` 额外验证工作流语法与内嵌媒体来源哈希。
 
 `.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。`arm64`／`x86_64` 两项矩阵均使用 `macos-26`，分别运行 `scripts/test.sh --checks-only`（工程、资源、本地化、版本快速检查），通过后才读取签名凭据，构建 Release、签名、打包并验证挂载产物；所有步骤绑定同一次触发的精确提交。一项失败不取消另一项，以保留诊断。不运行 XCTest 或完整测试工具自测，也不分流到 Linux。交叉编译及验签不等于 Intel 真机运行验收。Actions 使用最新已验证稳定版并固定完整 SHA；升级须检查兼容性，不追踪浮动 main。日志记录 Xcode／SDK／Swift 版本，不引入 Beta 工具链。
 

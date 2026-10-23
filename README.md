@@ -27,18 +27,20 @@ MediaRemoteAdapter 使用 macOS 私有媒体接口，已明确保留，但无法
 
 ## 开发与验证
 
+仓库内 `mise.toml` 固定 Python 和 actionlint，并提供本地／CI 共用入口。先审阅并信任该项目配置；缺少工具时由使用者执行 `mise install`，不运行 `mise use -g` 或更改全局 Xcode。
+
 ```sh
 # 日常核心行为测试：不操作桌面 UI
-bash scripts/test.sh
+mise run test
 
 # 发布前核心测试及工具自测：仍不运行桌面 UI
-bash scripts/test.sh --full -resultBundlePath build/pre-release.xcresult
+mise run test:full -- -resultBundlePath build/pre-release.xcresult
 
 # 显式桌面 UI 回归：会打开窗口、切换焦点，请单独安排
-bash scripts/test.sh --ui -resultBundlePath build/desktop-ui.xcresult
+mise run test:ui -- -resultBundlePath build/desktop-ui.xcresult
 
 # 构建 arm64 和 x86_64 两份 DMG，校验辅助程序、资源与签名
-python3 scripts/release.py build
+mise run build
 ```
 
 应用分别位于 `build/arm64/NotchX.app` 和 `build/x86_64/NotchX.app`，带版本号与架构的 DMG、校验和及构建说明位于 `build/release/`。Apple Silicon 选择 arm64，Intel 选择 x86_64；DMG 中将应用拖入 Applications 即可安装。这些是固定自签、未经 Apple 公证的产物，不保证默认 Gatekeeper 放行或升级时所有权限自动保留。构建脚本不会安装或启动应用，不会修改系统信任与安全设置。

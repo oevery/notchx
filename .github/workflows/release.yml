@@ -29,6 +29,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set up repository-pinned tools
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          mise_dir: ${{ runner.temp }}/notchx-tools
       - name: Show SDK and compiler
         run: xcodebuild -version && xcrun --sdk macosx --show-sdk-version && swift --version
       - name: Read the single version configuration
@@ -37,7 +42,7 @@ jobs:
           python3 scripts/release.py metadata --arch ${{ matrix.arch }} > "$RUNNER_TEMP/notchx-metadata.json"
           jq -r '"artifact=" + .artifact' "$RUNNER_TEMP/notchx-metadata.json" >> "$GITHUB_OUTPUT"
       - name: Check project, localization and metadata without signing credentials
-        run: bash scripts/test.sh --checks-only
+        run: mise run check
       - name: Identify compiler cache environment
         id: compiler
         run: |
@@ -58,7 +63,7 @@ jobs:
         env:
           NOTCHX_SIGNING_P12_BASE64: ${{ secrets.NOTCHX_SIGNING_P12_BASE64 }}
           NOTCHX_SIGNING_P12_PASSWORD: ${{ secrets.NOTCHX_SIGNING_P12_PASSWORD }}
-        run: python3 scripts/release.py build --arch ${{ matrix.arch }}
+        run: mise run build -- --arch ${{ matrix.arch }}
       - name: Downloadable DMG without ZIP wrapper
         id: dmg
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

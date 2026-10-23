@@ -6,6 +6,7 @@ import tempfile
 import shutil
 import re
 import json
+import hashlib
 import sys
 import xml.etree.ElementTree as ET
 
@@ -17,6 +18,27 @@ GENERATED_PROJECT_PATHS = [
     'TestPlans/Core.xctestplan',
     'TestPlans/DesktopUI.xctestplan',
 ]
+
+def validate_media_adapter(root):
+    manifest = json.loads((root/'Config/MediaRemoteAdapter.json').read_text())
+    base = 'App/Resources/MediaRemoteAdapter/'
+    framework = base + 'MediaRemoteAdapter.framework/'
+    required = {base + 'mediaremote-adapter.pl', framework + 'Versions/A/MediaRemoteAdapter',
+                framework + 'Versions/A/Resources/Info.plist', framework + 'Versions/A/_CodeSignature/CodeResources',
+                'Licenses/MediaRemoteAdapter-BSD-3-Clause.txt'}
+    if (manifest.get('repository') != 'https://github.com/ungive/mediaremote-adapter'
+        or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', manifest.get('tag', ''))
+        or not re.fullmatch(r'[0-9a-f]{40}', manifest.get('commit', ''))
+        or set(manifest.get('sha256', {})) != required):
+        raise ValueError('MediaRemoteAdapter provenance must pin source and every payload/license checksum.')
+    for relative, expected in manifest['sha256'].items():
+        if hashlib.sha256((root/relative).read_bytes()).hexdigest() != expected:
+            raise ValueError(f'MediaRemoteAdapter checksum mismatch: {relative}')
+    for relative, target in {'Versions/Current': 'A', 'Resources': 'Versions/Current/Resources',
+                             'MediaRemoteAdapter': 'Versions/Current/MediaRemoteAdapter'}.items():
+        link = root/framework/relative
+        if not link.is_symlink() or str(link.readlink()) != target or not link.exists():
+            raise ValueError(f'MediaRemoteAdapter framework link mismatch: {relative}')
 
 def validate_test_selection(root, name, arguments):
     if name not in ['Core', 'DesktopUI']:
@@ -78,6 +100,35 @@ def obsolete_source_paths(root):
 
 def self_test():
     import unittest
+
+    class MediaAdapterTests(unittest.TestCase):
+        def test_payload_license_and_manifest_mutations_are_rejected(self):
+            source = Path(__file__).resolve().parent.parent
+            with tempfile.TemporaryDirectory(prefix='notchx-media-check-') as temporary:
+                root = Path(temporary)
+                for directory in ['Config', 'Licenses', 'App/Resources/MediaRemoteAdapter']:
+                    shutil.copytree(source/directory, root/directory, symlinks=True)
+                validate_media_adapter(root)
+                manifest_path = root/'Config/MediaRemoteAdapter.json'
+                manifest = json.loads(manifest_path.read_text())
+                for relative in manifest['sha256']:
+                    file = root/relative
+                    original = file.read_bytes()
+                    file.chmod(file.stat().st_mode | 0o200)
+                    file.write_bytes(original + b'changed')
+                    with self.subTest(file=relative), self.assertRaises(ValueError):
+                        validate_media_adapter(root)
+                    file.write_bytes(original)
+                del manifest['sha256']['App/Resources/MediaRemoteAdapter/mediaremote-adapter.pl']
+                manifest_path.write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    validate_media_adapter(root)
+                shutil.copy2(source/'Config/MediaRemoteAdapter.json', manifest_path)
+                link = root/'App/Resources/MediaRemoteAdapter/MediaRemoteAdapter.framework/Versions/Current'
+                link.unlink()
+                link.symlink_to('missing')
+                with self.assertRaises(ValueError):
+                    validate_media_adapter(root)
 
     class ObsoleteSourceTests(unittest.TestCase):
         def setUp(self):
@@ -262,7 +313,7 @@ def self_test():
                     validate_test_selection(self.root, 'Core', arguments)
 
     suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(case)
-                               for case in [ObsoleteSourceTests, WorkspaceMetadataTests])
+                               for case in [ObsoleteSourceTests, WorkspaceMetadataTests, MediaAdapterTests])
     result = unittest.TextTestRunner().run(suite)
     sys.exit(0 if result.wasSuccessful() else 1)
 
@@ -333,6 +384,10 @@ for path in (root/'App/Resources').rglob('*'):
     if path.name in ['node_modules', 'BundledExtensions'] or path.suffix in ['.mjs', '.cjs']:
         sys.exit(f'JavaScript extension asset present: {path}')
 framework = root/'App/Resources/MediaRemoteAdapter/MediaRemoteAdapter.framework'
+try:
+    validate_media_adapter(root)
+except (ValueError, KeyError, OSError) as error:
+    sys.exit(str(error))
 if not (framework/'Versions/Current').is_symlink() or not (framework/'MediaRemoteAdapter').is_symlink():
     sys.exit('Media adapter framework symlinks must be preserved.')
 for file in [framework/'Versions/A/MediaRemoteAdapter', framework.parent/'mediaremote-adapter.pl']:

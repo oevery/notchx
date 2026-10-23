@@ -3,6 +3,20 @@ import AppKit
 @testable import NotchX
 
 final class MediaRemoteProtocolTests: XCTestCase {
+    func testAdapter077FullSnapshotAcceptsArtworkMimeTypeAndFractionalRate() throws {
+        // v0.7.6+ carries artworkMimeType with artworkData; decoding additional
+        // metadata must preserve the source position/rate and full-snapshot flag.
+        let data = Data(#"{"type":"data","diff":false,"payload":{"bundleIdentifier":"com.apple.Music","title":"Track","playing":true,"elapsedTime":10,"duration":100,"timestamp":"1970-01-01T00:01:40Z","playbackRate":1.25,"artworkData":"Y292ZXI=","artworkMimeType":"image/png"}}"#.utf8)
+        let event = try JSONDecoder().decode(NowPlayingUpdate.self, from: data)
+        XCTAssertEqual(event.diff, false)
+        XCTAssertEqual(event.payload.artworkData, "Y292ZXI=")
+        XCTAssertEqual(event.payload.playbackRate, 1.25)
+        let position = event.payload.calibratedElapsedTime(
+            incoming: event.payload, diff: false, previousElapsed: nil,
+            trackChanged: true, now: Date(timeIntervalSince1970: 105))
+        XCTAssertEqual(try XCTUnwrap(position), 16.25, accuracy: 0.001)
+    }
+
     func testNetEaseTransportUUIDChangesDoNotReplaceTheDisplayedTrack() throws {
         let original = try payload(#"{"bundleIdentifier":"com.netease.163music","title":"Old","artist":"Singer","album":"Album","contentItemIdentifier":"before","artworkData":"cover","playing":true}"#)
         let transport = try payload(#"{"contentItemIdentifier":"after","playing":false}"#)

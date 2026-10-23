@@ -245,6 +245,9 @@ def verify_resources(app):
             raise ValueError(f"媒体框架链接缺失或失效: {link.relative_to(app)}")
     if not (resources / "AppIcon.icns").is_file():
         raise ValueError("缺少应用图标")
+    provenance = resources / "MediaRemoteAdapter/Provenance.json"
+    if not provenance.is_file() or provenance.read_bytes() != (ROOT / "Config/MediaRemoteAdapter.json").read_bytes():
+        raise ValueError("媒体适配器来源记录缺失或不一致")
     for source in [ROOT / "THIRD_PARTY_NOTICES.md", *(ROOT / "Licenses").rglob("*")]:
         if source.is_file():
             bundled = resources / source.relative_to(ROOT)

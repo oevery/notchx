@@ -4,25 +4,29 @@
 
 最低 macOS 26，使用 Swift 6 工具链、Swift 5 语言模式和 Xcode 26 或更新版本。不增加旧系统兼容层。应用与测试只有 `NotchX.xcodeproj` 一个工程入口。
 
+`mise.toml` 是项目工具版本的唯一来源：Python 3.15.0、actionlint 1.7.12。任务只调用已有脚本，不复制测试／打包逻辑。已有版本直接复用；缺失工具由使用者显式 `mise install` 安装到工具缓存，不修改全局版本配置。审阅后信任本项目配置；自动化可以仅在进程内设置 `MISE_TRUSTED_CONFIG_PATHS` 为本仓库配置路径，不添加全局信任。Xcode、SDK、Perl、codesign 和 hdiutil 由系统提供；不单独安装 Swift 或替换系统工具。CI 使用固定 SHA 的 mise-action 读取同一配置，工具缓存与签名目录隔离。
+
 ```sh
-bash scripts/test.sh
-bash scripts/test.sh --full -resultBundlePath build/pre-release.xcresult
-python3 scripts/release.py build
+mise run test
+mise run test:full -- -resultBundlePath build/pre-release.xcresult
+mise run build
+mise run test:media -- -resultBundlePath build/media-core.xcresult
+mise run test:tools
 
 # 定向核心测试：跳过工具检查，但始终校验分组边界
-bash scripts/test.sh --native-only -only-testing:NotchXTests/AgentSessionStoreTests
+mise run test -- --native-only -only-testing:NotchXTests/AgentSessionStoreTests
 
 # 仅快速静态检查（与 CI 相同，不构建、不运行 XCTest）
-bash scripts/test.sh --checks-only
+mise run check
 
 # 显式桌面 UI 回归：会打开窗口、切换焦点，需单独安排
-bash scripts/test.sh --ui -resultBundlePath build/desktop-ui.xcresult
+mise run test:ui -- -resultBundlePath build/desktop-ui.xcresult
 
 # 按需生成布局 PNG，也必须显式允许桌面 UI
-bash scripts/test.sh --ui -only-testing:NotchXTests/CompactSlotLayoutTests NOTCHX_CAPTURE_TEST_IMAGES=1
+mise run test:ui -- -only-testing:NotchXTests/CompactSlotLayoutTests NOTCHX_CAPTURE_TEST_IMAGES=1
 
 # 修改 Swift 文件清单后同步工程
-python3 scripts/generate-xcode-project.py
+mise exec -- python3 scripts/generate-xcode-project.py
 ```
 
 `test.sh` 默认选择 Core：检查工程同步、本地化、版本，然后运行不操作桌面 UI 的核心行为测试。`--full` 在相同 Core 范围上增加检查器和发布工具自测，**不是所有 UI 的全量运行**。`--native-only` 仅跳过工具检查，不绕过 Core 边界；`--daily` 是兼容的 Core 别名。任何检查失败都会终止流程；原生编译同时承担语法和 SDK 类型检查。不再维护 Linux 行为测试或源码裁剪／替换式测试宿主。
@@ -38,7 +42,7 @@ Xcode 共享计划为 Core 和 DesktopUI，默认选中 Core。Core 保留协议
 ## 脚本职责
 
 - `generate-xcode-project.py`：确定性生成工程、共享 scheme 和 Core/DesktopUI 测试计划，不覆盖个人工作区状态。
-- `check-native-project.py`：在隔离目录生成后比对，检查唯一宿主、测试隔离、系统版本与媒体资源。
+- `check-native-project.py`：在隔离目录生成后比对，检查唯一宿主、测试隔离、系统版本、媒体来源清单、文件 SHA-256 与框架链接。
 - `check-localization.py`：检查本地化键与格式契约；不检查文档语言。
 - `test.sh`：默认 `--core`；`--full` 核心测试加工具自测；`--ui` 显式桌面回归；`--checks-only` 仅运行 CI 快速检查；兼容 `--native-only` 核心定向测试。所有模式执行一次环境预检，不读取发布凭据；测试筛选校验通过后才调用 Xcode。
 - `release.py`：统一读取版本信息，`build` 构建固定自签的 arm64／x86_64 两份 DMG；`--arch` 可指定单一架构，`verify --arch` 只读校验身份、元信息、资源与架构，`--dmg` 可复验镜像，不启动应用；见 [发布准备](RELEASE.md)。
@@ -48,6 +52,16 @@ Xcode 共享计划为 Core 和 DesktopUI，默认选中 Core。Core 保留协议
 - `prepare-agent-icons.py`：从保留的品牌 SVG 重建 PNG，保留可复现的资源处理路径。
 
 ## 测试维护
+
+### MediaRemoteAdapter 更新
+
+`Config/MediaRemoteAdapter.json` 固定上游 tag／commit、构建工具链、命令和当前入库文件 SHA-256；脚本与框架必须来自同一份源码。上游 plist 的 0.1.0 是框架内部版本，不是上游 release 版本。当前使用 v0.7.7，无源码补丁；许可证保留上游原文。
+
+更新时检出清单中的确定提交，用清单命令构建 `MediaRemoteAdapter` 目标（不运行上游测试播放器），保持框架符号链接并同步脚本、框架和校验值。CMake 只在维护第三方框架时需要，普通开发／CI 使用已入库框架；本次构建的 CMake／Xcode／SDK 版本记录在清单，不自动安装或切换本机工具链。不同工具链重建可能产生不同二进制哈希，清单用于验证入库副本，不承诺跨机器逐字节可复现。
+
+`mise run check` 拒绝脚本、框架、许可证或清单不一致；`mise run test:media` 只选择媒体核心套件；`mise run build` 验证两份分架构应用与固定签名。来源清单随应用复制到 `Contents/Resources/MediaRemoteAdapter/Provenance.json`。其中哈希针对原始双架构入库副本，分发包内框架经裁剪／重签后哈希会改变，分发完整性以最终签名和 DMG 校验和为准。
+
+继续使用 `stream --no-diff`，不自动启用无标题输出或实验性防抖。升级后播放、暂停、切歌、seek、封面、播放器切换与系统兼容性仍须人工验收；核心测试不能证明私有接口在真实播放器中可用。
 
 `Tests/` 是原生测试的权威入口。测试生命周期转换、旧结果拒绝、取消、模块停用、选择／置顶、原会话身份和真实副作用，保留失败与权限未知等分支。不为简单 getter、静态枚举映射或类型已保证的行为增加测试。
 

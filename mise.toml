@@ -1,0 +1,36 @@
+# 仅作用于本仓库；Xcode/SDK 与系统签名工具继续由 macOS 提供。
+[tools]
+python = "3.15.0"
+actionlint = "1.7.12"
+
+[tasks.check]
+description = "快速检查项目、资源、本地化、版本与工作流，不运行测试"
+run = ["actionlint", "bash scripts/test.sh --checks-only"]
+
+[tasks.test]
+description = "日常 Core 测试，不操作桌面 UI；可追加 Xcode 筛选参数"
+run = "bash scripts/test.sh"
+
+[tasks."test:full"]
+description = "发布前 Core 与工具自测，不操作桌面 UI"
+run = "bash scripts/test.sh --full"
+
+[tasks."test:tools"]
+description = "工具自测，不构建或启动应用"
+run = ["python3 scripts/check-native-project.py --self-test", "python3 scripts/test-release.py", "python3 scripts/check-localization.py --self-test"]
+
+[tasks."test:media"]
+description = "媒体协议、元数据、生命周期、播放位置与控制意图 Core 回归"
+run = "bash scripts/test.sh --native-only -only-testing:NotchXTests/MediaRemoteProtocolTests -only-testing:NotchXTests/NowPlayingLifecycleTests -only-testing:NotchXTests/NowPlayingMetadataTests -only-testing:NotchXTests/PendingPlaybackSeekTests -only-testing:NotchXTests/PlaybackFavoriteTests -only-testing:NotchXTests/PlaybackPositionTests"
+
+[tasks."test:ui"]
+description = "显式桌面 UI 回归，会影响窗口和焦点"
+run = "bash scripts/test.sh --ui"
+
+[tasks.build]
+description = "固定自签的分架构 DMG；可追加 --arch arm64 或 x86_64"
+run = "python3 scripts/release.py build"
+
+[tasks.verify]
+description = "只读验证应用或 DMG，必须追加 --arch"
+run = "python3 scripts/release.py verify"

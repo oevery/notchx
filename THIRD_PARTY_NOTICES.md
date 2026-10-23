@@ -8,7 +8,7 @@
 
 用于系统媒体信息与播放控制。来源：[ungive/mediaremote-adapter](https://github.com/ungive/mediaremote-adapter)。采用 BSD 3-Clause 许可证，完整声明见 [MediaRemoteAdapter-BSD-3-Clause.txt](Licenses/MediaRemoteAdapter-BSD-3-Clause.txt)，随应用打包。
 
-内置框架的精确构建版本未被标明，不宣称来自最新源码。适配器使用 macOS 私有媒体接口，未来系统兼容性无法保证；现有上游签名不是 NotchX 发布签名。
+脚本与框架统一来自 v0.7.7；固定源码、构建工具链及 SHA-256 见 [来源记录](Config/MediaRemoteAdapter.json)，该记录随应用打包。框架由未修改的上游源码构建，原始副本采用 ad-hoc 签名，分发副本由 NotchX 固定身份重签。适配器使用 macOS 私有媒体接口，未来系统兼容性无法保证。
 
 ## Agent 品牌标识
 

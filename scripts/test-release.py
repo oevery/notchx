@@ -264,6 +264,7 @@ class ReleaseTests(unittest.TestCase):
         (release.framework(app) / "Versions/Current").symlink_to("A")
         (release.framework(app) / "MediaRemoteAdapter").symlink_to("Versions/Current/MediaRemoteAdapter")
         (resources / "AppIcon.icns").write_bytes(b"fixture")
+        (resources / "MediaRemoteAdapter/Provenance.json").write_bytes((release.ROOT / "Config/MediaRemoteAdapter.json").read_bytes())
         for source in [release.ROOT / "THIRD_PARTY_NOTICES.md", *(release.ROOT / "Licenses").rglob("*")]:
             if source.is_file():
                 target = resources / source.relative_to(release.ROOT)
@@ -277,6 +278,7 @@ class ReleaseTests(unittest.TestCase):
             release.verify_resources(app)
             execute.assert_not_called()
         for path in [*executables, app / "Contents/Resources/AppIcon.icns",
+                     app / "Contents/Resources/MediaRemoteAdapter/Provenance.json",
                      app / "Contents/Resources/THIRD_PARTY_NOTICES.md"]:
             with self.subTest(missing=path.name):
                 contents, mode = path.read_bytes(), path.stat().st_mode

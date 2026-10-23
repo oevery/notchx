@@ -14,6 +14,7 @@ resources="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
 rm -rf -- "$resources"
 mkdir -p "$resources"
 /usr/bin/ditto "$SRCROOT/App/Resources" "$resources"
+cp "$SRCROOT/Config/MediaRemoteAdapter.json" "$resources/MediaRemoteAdapter/Provenance.json"
 # The adapter is loaded at runtime, not linked as a public framework.
 # Keep its original signed payload and executable permissions intact.
 test -x "$resources/MediaRemoteAdapter/mediaremote-adapter.pl"

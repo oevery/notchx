@@ -230,6 +230,7 @@
         "IslandMotionTests/testPauseRetentionUsesOriginalPauseTimeAndStaysSeparateFromLoadingGrace()",
         "IslandMotionTests/testShortPlaybackInterruptionDoesNotExtendOrResurrectGrace()",
         "IslandMotionTests/testWindowPreparationDoesNotRunInsideTransactionRegistration()",
+        "MediaRemoteProtocolTests/testAdapter077FullSnapshotAcceptsArtworkMimeTypeAndFractionalRate()",
         "MediaRemoteProtocolTests/testNetEaseLoadingPauseDoesNotFlashButConfirmedUserPauseIsImmediate()",
         "MediaRemoteProtocolTests/testNetEasePendingSongCannotSurviveSourceChangeOrLifecycleReset()",
         "MediaRemoteProtocolTests/testNetEasePublishesCompleteTrackAfterMetadataSettles()",

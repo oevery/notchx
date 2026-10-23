@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/ungive/mediaremote-adapter",
+  "tag": "v0.7.7",
+  "commit": "e3ff5021eb0875858bd05f48d2e9ba2e962d1cf6",
+  "source_modified": false,
+  "build": {
+    "cmake": "4.1.6",
+    "xcode": "27.1 (27A9275)",
+    "sdk": "macOS 27.0",
+    "deployment_target": "26.0",
+    "architectures": ["arm64", "x86_64"],
+    "configure": "cmake -S <source> -B <build> -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0",
+    "compile": "cmake --build <build> --target MediaRemoteAdapter --parallel 4",
+    "signing": "upstream CMake ad-hoc; release copy thinned and re-signed by NotchX"
+  },
+  "sha256": {
+    "App/Resources/MediaRemoteAdapter/mediaremote-adapter.pl": "d97802e46db9535e2549e178c105ebf417a0254b3929fc32f08ecfd14d49a85f",
+    "App/Resources/MediaRemoteAdapter/MediaRemoteAdapter.framework/Versions/A/MediaRemoteAdapter": "f77c6aa4df58685296cede3ad7bcc3eae1c67a7548b9d12ebb716ddb83b918dd",
+    "App/Resources/MediaRemoteAdapter/MediaRemoteAdapter.framework/Versions/A/Resources/Info.plist": "cf7c9699302a8ddacf24465443eb7a0153e1c347bf23c3c0895af41c85368af8",
+    "App/Resources/MediaRemoteAdapter/MediaRemoteAdapter.framework/Versions/A/_CodeSignature/CodeResources": "5ddd46b76ea756abd4e084c1f21566a39b4ff890bd21dce9b6f11ace69563305",
+    "Licenses/MediaRemoteAdapter-BSD-3-Clause.txt": "a489c16a6be195584fa0b35e28fca54abc8492eb0cc05d851dd24f522f4900a2"
+  }
+}
