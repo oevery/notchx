@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +26,14 @@ HELPER_ID = "app.notchx.agent-bridge"
 SECRET_ENVIRONMENT = {"NOTCHX_SIGNING_P12_BASE64", "NOTCHX_SIGNING_P12_PASSWORD"}
 
 
+class CommandFailure(RuntimeError):
+    def __init__(self, tool, returncode, stderr):
+        self.tool = tool
+        self.returncode = returncode
+        self.stderr = stderr
+        super().__init__(f"{tool} 失败，退出码 {returncode}: {stderr}")
+
+
 def run(arguments, *, private=False, capture=True, input=None, cwd=ROOT):
     result = subprocess.run([str(arg) for arg in arguments], cwd=cwd, input=input,
                             env={key: value for key, value in os.environ.items() if key not in SECRET_ENVIRONMENT},
@@ -32,7 +41,7 @@ def run(arguments, *, private=False, capture=True, input=None, cwd=ROOT):
                             stderr=subprocess.PIPE if capture else None)
     if result.returncode:
         detail = "（签名凭据命令输出已隐藏）" if private else (result.stderr or b"").decode(errors="replace")
-        raise RuntimeError(f"{Path(arguments[0]).name} 失败，退出码 {result.returncode}: {detail}")
+        raise CommandFailure(Path(arguments[0]).name, result.returncode, detail)
     return result.stdout or b""
 
 
@@ -125,7 +134,7 @@ def publish_assets(directory):
         if checksum_path.read_text().strip() != f"{digest}  {archive.name}":
             raise ValueError(f"DMG 校验和不一致: {name}")
         verify_dmg(archive, context, arch)
-        assets.extend([archive, checksum_path, report_path])
+        assets.extend([archive, checksum_path])
     endpoint = f"repos/oevery/notchx/releases/{context['release_id']}"
     current = json.loads(run(["gh", "api", endpoint]))
     if current.get("tag_name") != context["tag"] or current.get("draft") is not False:
@@ -147,7 +156,7 @@ def publish_assets(directory):
         if (uploaded.get("state") != "uploaded" or uploaded.get("name") != asset.name
             or uploaded.get("digest") != "sha256:" + hashlib.sha256(asset.read_bytes()).hexdigest()):
             raise ValueError(f"上传后的附件状态或校验和不一致: {asset.name}")
-    print("两份 DMG、校验和及构建报告已上传（相同附件跳过）；未创建或编辑 Release/tag。")
+    print("两份 DMG 及各自的 .sha256 已上传（相同附件跳过）；JSON 仅保留在 CI 验证产物中。")
 
 
 def require_external(path):
@@ -356,8 +365,24 @@ def verify_bundle(app, meta, arch):
     verify_signature(app, APP_ID, deep=True)
 
 
+def verify_disk_image(archive):
+    delays = (2, 5)
+    for attempt in range(1, 4):
+        try:
+            run(["hdiutil", "verify", archive])
+            return
+        except CommandFailure as error:
+            print(f"hdiutil verify 第 {attempt}/3 次失败: {error}", file=sys.stderr, flush=True)
+            # 仅重试明确的 EAGAIN 锁错误；损坏、权限、签名等错误不重试。
+            if error.tool != "hdiutil" or "Resource temporarily unavailable" not in error.stderr or attempt == 3:
+                raise
+            delay = delays[attempt - 1]
+            print(f"{delay} 秒后重试同一 DMG，不重新构建或跳过校验", file=sys.stderr, flush=True)
+            time.sleep(delay)
+
+
 def verify_dmg(archive, meta, arch):
-    run(["hdiutil", "verify", archive])
+    verify_disk_image(archive)
     with tempfile.TemporaryDirectory(prefix="notchx-mount-") as temporary:
         mount = Path(temporary) / "volume"
         run(["hdiutil", "attach", archive, "-readonly", "-nobrowse", "-noautoopen",

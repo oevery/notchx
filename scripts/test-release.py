@@ -84,10 +84,15 @@ class ReleaseTests(unittest.TestCase):
 
     def test_publish_verifies_both_architectures_and_never_overwrites_conflicting_assets(self):
         context, files = self.publish_fixture()
+        public_files = [files[0], files[1], files[3], files[4]]
+        remote_assets = [
+            {'name': f.name, 'digest': 'sha256:' + hashlib.sha256(f.read_bytes()).hexdigest(), 'state': 'uploaded'}
+            for f in public_files
+        ]
         for mode in ['new', 'identical', 'partial', 'conflict', 'changed-release', 'bad-upload-response']:
-            existing = [{'name': f.name, 'digest': 'sha256:' + hashlib.sha256(f.read_bytes()).hexdigest(), 'state': 'uploaded'} for f in files]
+            existing = [asset.copy() for asset in remote_assets]
             if mode in ['new', 'bad-upload-response']: existing = []
-            if mode == 'partial': existing = existing[:2]
+            if mode == 'partial': existing = existing[:1]
             if mode == 'conflict': existing[-1]['digest'] = 'sha256:wrong'
             def execute(args, **kwargs):
                 if '--slurp' in args: return json.dumps([existing]).encode()
@@ -106,8 +111,12 @@ class ReleaseTests(unittest.TestCase):
                     release.publish_assets(self.directory)
                 self.assertEqual(verify.call_count, 2)
                 uploads = [c.args[0] for c in api.call_args_list if '--method' in c.args[0]]
-                self.assertEqual(len(uploads), {'new': 6, 'partial': 4, 'bad-upload-response': 1}.get(mode, 0))
+                self.assertEqual(len(uploads), {'new': 4, 'partial': 3, 'bad-upload-response': 1}.get(mode, 0))
+                if mode == 'new':
+                    self.assertEqual([c[-1].name for c in uploads], [f.name for f in public_files])
+                self.assertTrue(all(file.is_file() for file in files))
                 for command in uploads:
+                    self.assertNotEqual(command[-1].suffix, '.json')
                     self.assertEqual(command[3], 'POST')
                     self.assertTrue(command[4].startswith('https://uploads.github.com/repos/oevery/notchx/releases/123/assets?name='))
 
@@ -128,6 +137,44 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises((ValueError, OSError, RuntimeError)):
                     release.publish_assets(self.directory)
                 api.assert_not_called()
+
+    def test_disk_image_verification_retries_only_transient_failures_with_bounded_backoff(self):
+        temporary = release.CommandFailure('hdiutil', 1, 'verify failed - Resource temporarily unavailable')
+        corrupt = release.CommandFailure('hdiutil', 1, 'verify failed - checksum mismatch')
+        denied = release.CommandFailure('hdiutil', 1, 'Permission denied')
+        other_tool = release.CommandFailure('codesign', 1, 'Resource temporarily unavailable')
+        cases = [([b''], [], False), ([temporary, b''], [2], False),
+                 ([temporary, temporary, b''], [2, 5], False),
+                 ([temporary, temporary, temporary], [2, 5], True),
+                 ([corrupt], [], True), ([denied], [], True), ([other_tool], [], True),
+                 ([temporary, corrupt], [2], True)]
+        for results, waits, fails in cases:
+            errors = io.StringIO()
+            archive = self.directory / 'same.dmg'
+            with (self.subTest(results=results), patch.object(release, 'run', side_effect=results) as execute,
+                  patch.object(release.time, 'sleep') as sleep, contextlib.redirect_stderr(errors)):
+                if fails:
+                    with self.assertRaises(release.CommandFailure) as caught:
+                        release.verify_disk_image(archive)
+                    self.assertIs(caught.exception, results[-1])
+                else:
+                    release.verify_disk_image(archive)
+                self.assertEqual([c.args[0] for c in sleep.call_args_list], waits)
+                self.assertEqual([c.args[0] for c in execute.call_args_list], [['hdiutil', 'verify', archive]] * len(results))
+                for index, result in enumerate(results, 1):
+                    if isinstance(result, release.CommandFailure):
+                        self.assertIn(f'第 {index}/3 次失败', errors.getvalue())
+                        self.assertIn(result.stderr, errors.getvalue())
+
+    def test_exhausted_image_verification_never_mounts_or_verifies_bundle(self):
+        error = release.CommandFailure('hdiutil', 1, 'Resource temporarily unavailable')
+        with (patch.object(release, 'run', side_effect=error) as execute,
+              patch.object(release.time, 'sleep'), patch.object(release, 'verify_bundle') as bundle,
+              contextlib.redirect_stderr(io.StringIO()), self.assertRaises(release.CommandFailure)):
+            release.verify_dmg(self.directory / 'failed.dmg', {}, 'arm64')
+        self.assertEqual(execute.call_count, 3)
+        self.assertTrue(all(c.args[0][:2] == ['hdiutil', 'verify'] for c in execute.call_args_list))
+        bundle.assert_not_called()
 
     def test_single_metadata_source_controls_archive_name_and_bundle_placeholders(self):
         original = (release.ROOT / "Config/Version.xcconfig").read_text()

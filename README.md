@@ -29,6 +29,8 @@ MediaRemoteAdapter 使用 macOS 私有媒体接口，已明确保留，但无法
 
 支持 macOS 26+；Apple Silicon 下载 arm64，Intel 下载 x86_64。打开 DMG，将应用拖入 Applications。固定自签、未经 Apple 公证，首次打开可能被系统拦截；权限按需授予。
 
+下载对应架构的 DMG 和同名 `.sha256` 到同一目录，可用 `shasum -a 256 -c <文件名>.dmg.sha256` 校验。
+
 ## 开发与验证
 
 仓库内 `mise.toml` 固定 Python 和 actionlint，并提供本地／CI 共用入口。先审阅并信任该项目配置；缺少工具时由使用者执行 `mise install`，不运行 `mise use -g` 或更改全局 Xcode。

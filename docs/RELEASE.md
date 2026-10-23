@@ -37,6 +37,8 @@ mise run verify -- --arch x86_64
 
 ## Release CI 与 Secrets
 
+镜像校验仅对 `hdiutil verify` 的 `Resource temporarily unavailable` 临时锁错误重试：最多 3 次，间隔 2、5 秒，复用同一镜像并保留每次失败日志。其他镜像错误、挂载／卸载及签名失败不重试或跳过，重试耗尽仍终止流程。
+
 触发方式：main 分支的 `workflow_dispatch` 仅验证；`release: published` 在发布正式版或预发布版时打包并向该 Release 上传附件。不监听 tag push、Release 编辑或草稿保存，因此修改标题／说明不重建。Release 页面先公开，附件在构建成功后出现；失败时页面可能暂时没有附件。
 
 发布前先将本工作流合入 main，再基于已验收提交创建 `v<版本号>` 的 Release。无密钥预检要求 tag 与 `Config/Version.xcconfig` 完全一致，指向事件提交且该提交属于 origin/main 历史；不接受版本后缀或移动 tag。所有后续任务使用预检锁定的提交。
@@ -67,7 +69,7 @@ base64 < "$HOME/.local/share/notchx/signing/identity.p12" | gh secret set NOTCHX
 gh secret set NOTCHX_SIGNING_P12_PASSWORD --repo oevery/notchx --env release-signing < "$HOME/.local/share/notchx/signing/signing.password"
 ```
 
-CI 缺少 Secrets、凭据不完整或指纹不符都会失败，不降级为 ad-hoc 或无签名包。预检与构建仅有仓库读取权限；仅发布事件的上传任务获得 `contents: write`，且不接触签名私钥。它重新校验两份 DMG 的签名、架构、提交、来源记录和校验和，再上传 DMG、校验和及 JSON。手动验证不会运行上传任务。
+CI 缺少 Secrets、凭据不完整或指纹不符都会失败，不降级为 ad-hoc 或无签名包。预检与构建仅有仓库读取权限；仅发布事件的上传任务获得 `contents: write`，且不接触签名私钥。它读取两份 JSON 并重新校验 DMG 的签名、架构、提交、来源记录和校验和，全部通过后只上传两份 DMG 及各自的 `.dmg.sha256`。JSON 继续保留在 CI 验证产物中，不作为 Release 附件。手动验证不会运行上传任务，也不自动清理已发布版本的旧附件。
 
 CI 产物仍保留 14 天，每份 DMG 直接下载、不套 ZIP，验证资料单独保存。上传目标固定为触发事件的 Release ID，不创建或编辑 Release/tag。同名附件内容相同则跳过，不同或未上传完成则报错，不覆盖；上传途中失败可重跑失败的上传任务，复用同次构建产物。若重跑构建造成文件不同，须人工处理冲突。修改 Release 说明无需重跑 CI。
 
