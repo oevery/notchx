@@ -10,6 +10,7 @@ from pathlib import Path
 import plistlib
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -143,6 +144,7 @@ def signing_keychain(directory):
         keychain = temporary / "signing.keychain-db"
         keychain_password = secrets.token_urlsafe(48)
         created = False
+        original_search_list = None
         try:
             run(["security", "create-keychain", "-p", keychain_password, keychain], private=True)
             created = True
@@ -151,10 +153,20 @@ def signing_keychain(directory):
             run(["security", "import", p12, "-k", keychain, "-P", password, "-T", "/usr/bin/codesign"], private=True)
             run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:",
                  "-s", "-k", keychain_password, keychain], private=True)
+            # Some runner Security.framework versions do not resolve an identity
+            # in an unlisted keychain, even with codesign --keychain. Keep local
+            # user settings untouched; scope this change to the Actions runner.
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                original_search_list = shlex.split(run(["security", "list-keychains", "-d", "user"], private=True).decode())
+                run(["security", "list-keychains", "-d", "user", "-s", keychain, *original_search_list], private=True)
             yield keychain
         finally:
-            if created:
-                run(["security", "delete-keychain", keychain], private=True)
+            try:
+                if original_search_list is not None:
+                    run(["security", "list-keychains", "-d", "user", "-s", *original_search_list], private=True)
+            finally:
+                if created:
+                    run(["security", "delete-keychain", keychain], private=True)
 
 
 def certificate_fingerprint():
@@ -179,6 +191,23 @@ def sign(path, identifier, keychain, *, entitlements=None):
         arguments += ["--entitlements", entitlements]
     run([*arguments, path])
     verify_signature(path, identifier)
+
+def check_signing_identity(keychain):
+    fingerprint = certificate_fingerprint()
+    imported = run(["security", "find-certificate", "-a", "-Z", keychain], private=True)
+    if fingerprint.encode() not in imported.upper():
+        raise ValueError("导入的 P12 不包含仓库固定证书，拒绝使用其他身份")
+    # Without -v: an intentionally untrusted self-signed certificate can still
+    # sign correctly. A real sign/verify probe is authoritative, not trust status.
+    identities = run(["security", "find-identity", "-p", "codesigning", keychain], private=True).decode()
+    matches = re.findall(r"^\s*\d+\) ([0-9A-Fa-f]{40})\b", identities, re.M)
+    if fingerprint not in {value.upper() for value in matches}:
+        raise ValueError("临时钥匙串中没有固定证书与私钥配对的签名身份；请检查 P12 是否包含私钥")
+    print("固定证书与私钥配对检查通过，执行实际签名探针（不要求系统信任）", flush=True)
+    probe = keychain.parent / "signing-probe"
+    run(["xcrun", "clang", "-x", "c", "-", "-o", probe], input=b"int main(void) { return 0; }\n")
+    sign(probe, "app.notchx.signing-probe", keychain)
+    print("固定身份签名及严格验签探针通过；探针不会执行", flush=True)
 
 
 def framework(app):
@@ -238,13 +267,10 @@ def build(directory):
     if os.environ.get("CONFIGURATION", "Release") != "Release":
         raise ValueError("发布打包只支持 Release；调试与测试请使用 Xcode 或 test.sh --native-only")
     meta = metadata()
-    fingerprint = certificate_fingerprint()
     run(["openssl", "x509", "-inform", "DER", "-in", CERTIFICATE, "-checkend", "2592000", "-noout"])
-    # 先验证凭据能导入；整个步骤缺少身份即失败，不产生伪装成成功的无签名发布包。
+    # 编译前验证完整身份及实际签名能力，不把“已导入证书”当成可签名。
     with signing_keychain(directory) as keychain:
-        imported = run(["security", "find-certificate", "-a", "-Z", keychain], private=True)
-        if fingerprint.encode() not in imported.upper():
-            raise ValueError("导入的 P12 不包含仓库固定证书，拒绝使用其他身份")
+        check_signing_identity(keychain)
         run(["python3", "scripts/check-native-project.py"], capture=False)
         run(["xcodebuild", "-project", "NotchX.xcodeproj", "-scheme", "NotchX",
              "-configuration", "Release", "-derivedDataPath", ROOT / "build/DerivedData",
@@ -276,7 +302,7 @@ def build(directory):
         (output / f"{name}.zip.sha256").write_text(f"{checksum}  {name}.zip\n")
     report = {**meta, "signing": "fixed-self-signed", "notarized": False, "hardened_runtime": False,
               "certificate_sha256": hashlib.sha256(CERTIFICATE.read_bytes()).hexdigest(),
-              "certificate_sha1": fingerprint, "architectures": ["arm64", "x86_64"],
+              "certificate_sha1": certificate_fingerprint(), "architectures": ["arm64", "x86_64"],
               "archive": f"{name}.zip", "sha256": checksum,
               "source_commit": run(["git", "rev-parse", "HEAD"]).decode().strip(),
               "source_dirty": bool(run(["git", "status", "--porcelain"])),

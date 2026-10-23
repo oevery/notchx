@@ -28,13 +28,17 @@ python3 scripts/release.py verify
 
 可用 `python3 scripts/release.py build --identity-directory /安全的仓库外目录` 指定凭据位置。Xcode 普通 Run 和原生测试继续使用隔离的开发构建，不读取发布私钥；权限升级验收使用固定签名后的 `build/NotchX.app`。
 
-打包只支持 Release：先构建双架构，再由内到外签署媒体框架、桥接程序和主应用。仅修改构建副本，不修改源目录中的第三方框架。构建子进程不继承签名 Secrets；临时钥匙串在成功和失败时均清理。不安装信任根、不修改 Gatekeeper、不移除隔离标记，不安装或启动应用。
+打包只支持 Release：编译前检查固定证书与私钥配对，再编译一个最小探针并使用相同身份签名、严格验签；探针不执行。自签证书不要求成为系统信任身份，不能仅用 `find-identity -v` 的数量判定是否可签名。探针失败立即停止，不进入应用构建。通过后构建双架构，再由内到外签署媒体框架、桥接程序和主应用。
+
+仅修改构建副本，不修改源目录中的第三方框架。构建子进程不继承签名 Secrets；临时钥匙串在成功和失败时均清理。仅在 GitHub Actions runner 上，将临时钥匙串临时加入用户搜索列表，并在结束时恢复原列表；本地不修改搜索列表。两端都不安装信任根、不修改默认钥匙串或 Gatekeeper、不移除隔离标记，不安装或启动应用。
 
 产物位于 `build/release/`：版本化的 `NotchX-0.1.0-1-universal-selfsigned.zip`、同名 `.zip.sha256` 与 `.json`。JSON 记录版本、作者、证书指纹、架构、源码提交及脏工作区标记，明确标记未公证。ZIP 解压后再次验证资源、架构、版本和签名，全部通过才输出产物。旧的 `NotchX-developer-universal.zip` 不再更新，不用于本次发布。
 
 ## 手动 Release CI 与 Secrets
 
 `.github/workflows/release.yml` 只接受手动触发，仅允许 `oevery/notchx` 的 `main`。单个 `macos-26` 任务先运行 `scripts/test.sh --checks-only`（工程、资源、本地化、版本快速检查），通过后才读取签名凭据，构建 Release、签名、打包并验证解压产物；所有步骤绑定同一次触发的精确提交。不运行 XCTest 或完整测试工具自测，也不分流到 Linux。
+
+CI 编译缓存仅允许 `build/DerivedData/ModuleCache.noindex`、`SDKStatCaches.noindex` 和 `Build/Intermediates.noindex`，不缓存 `Build/Products`、`build/NotchX.app`、`build/release`、私钥目录或临时钥匙串。缓存键包含 runner 系统／架构、macOS build、Xcode build、SDK build、Release 双架构标记和构建输入摘要；仅在同一工具链前缀内回退恢复。恢复后仍由 Xcode 判断需要重编译的内容，不承诺与本地热增量完全相同。缓存仅在成功运行后保存，首次没有缓存属于正常情况。
 
 测试由本地负责：发布前对准备触发 CI 的同一个干净提交运行不带筛选参数的 `--full`（Core 加工具自测），保留提交 SHA 与 `.xcresult`；若代码变化，重新验证受影响内容及发布前核心测试。窗口和焦点回归须另行显式运行 `--ui`，视觉和真实权限按人工验收清单执行，分别记录已验证／未验证。CI 不自动证明本地测试已通过，核心通过不等于 UI 或真机验收完成，打包成功也不是完整测试通过；首次构建耗时仍须独立观察。
 

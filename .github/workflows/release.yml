@@ -31,7 +31,23 @@ jobs:
           jq -r '"artifact=" + .artifact' "$RUNNER_TEMP/notchx-metadata.json" >> "$GITHUB_OUTPUT"
       - name: Check project, localization and metadata without signing credentials
         run: bash scripts/test.sh --checks-only
-      - name: Build, sign with the fixed identity and verify the extracted archive
+      - name: Identify compiler cache environment
+        id: compiler
+        run: |
+          toolchain_key=$({ sw_vers -buildVersion; xcodebuild -version; xcrun --sdk macosx --show-sdk-build-version; } | shasum -a 256 | cut -d ' ' -f 1)
+          echo "key=$toolchain_key" >> "$GITHUB_OUTPUT"
+      - name: Restore and save compiler intermediates only
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          # No Build/Products, signed application, release archives, or signing directory.
+          path: |
+            build/DerivedData/ModuleCache.noindex
+            build/DerivedData/SDKStatCaches.noindex
+            build/DerivedData/Build/Intermediates.noindex
+          key: notchx-compiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-release-universal-${{ hashFiles('App/**', 'Helpers/**', 'Config/*.xcconfig', 'NotchX.xcodeproj/project.pbxproj', 'scripts/build-native-components.sh') }}
+          restore-keys: |
+            notchx-compiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-release-universal-
+      - name: Probe fixed signing identity, build and verify the extracted archive
         env:
           NOTCHX_SIGNING_P12_BASE64: ${{ secrets.NOTCHX_SIGNING_P12_BASE64 }}
           NOTCHX_SIGNING_P12_PASSWORD: ${{ secrets.NOTCHX_SIGNING_P12_PASSWORD }}

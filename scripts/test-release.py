@@ -116,6 +116,72 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn("synthetic-password", str(caught.exception))
             self.assertTrue(release.SECRET_ENVIRONMENT.isdisjoint(execute.call_args.kwargs["env"]))
 
+    def test_actions_search_list_is_restored_and_keychain_deleted_on_all_exit_paths(self):
+        for failure in [None, "register", "body", "restore"]:
+            with self.subTest(failure=failure):
+                commands = []
+                previous = ["/fixture/keychain with spaces.keychain-db", "/fixture/login.keychain-db"]
+                def execute(arguments, **kwargs):
+                    commands.append(arguments)
+                    if arguments[1:] == ["list-keychains", "-d", "user"]:
+                        return ('\n'.join('    "'+path+'"' for path in previous)).encode()
+                    if arguments[1:5] == ["list-keychains", "-d", "user", "-s"]:
+                        restoring = arguments[5:] == previous
+                        if failure == ("restore" if restoring else "register"):
+                            raise RuntimeError("synthetic search-list failure")
+                    return b""
+                with (patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "CI": "true",
+                         "NOTCHX_SIGNING_P12_BASE64": base64.b64encode(b"synthetic").decode(),
+                         "NOTCHX_SIGNING_P12_PASSWORD": "synthetic-password"}, clear=True),
+                      patch.object(release, "run", side_effect=execute)):
+                    def use_keychain():
+                        with release.signing_keychain(self.directory):
+                            if failure == "body":
+                                raise RuntimeError("synthetic build failure")
+                    if failure:
+                        with self.assertRaises(RuntimeError):
+                            use_keychain()
+                    else:
+                        use_keychain()
+                self.assertEqual(commands[-2], ["security", "list-keychains", "-d", "user", "-s", *previous])
+                self.assertEqual(commands[-1][1], "delete-keychain")
+                self.assertFalse(any(command[1] in {"add-trusted-cert", "default-keychain"} for command in commands))
+
+    def test_signing_preflight_requires_private_key_pair_and_probes_untrusted_identity(self):
+        fingerprint = release.certificate_fingerprint()
+        for certificate, identity in [(True, True), (True, False), (False, True)]:
+            with self.subTest(certificate=certificate, identity=identity):
+                commands = []
+                def execute(arguments, **kwargs):
+                    commands.append(arguments)
+                    if arguments[1] == "find-certificate":
+                        return fingerprint.encode() if certificate else b"other"
+                    if arguments[1] == "find-identity":
+                        self.assertNotIn("-v", arguments)
+                        return f'  1) {fingerprint} "fixture" (CSSMERR_TP_NOT_TRUSTED)\n  0 valid identities found'.encode() if identity else b"0 identities found"
+                    self.assertEqual(arguments[:2], ["xcrun", "clang"])
+                    return b""
+                keychain = self.directory / "signing.keychain-db"
+                with (patch.object(release, "run", side_effect=execute), patch.object(release, "sign") as sign,
+                      contextlib.redirect_stdout(io.StringIO())):
+                    if certificate and identity:
+                        release.check_signing_identity(keychain)
+                        sign.assert_called_once_with(self.directory / "signing-probe", "app.notchx.signing-probe", keychain)
+                    else:
+                        with self.assertRaises(ValueError):
+                            release.check_signing_identity(keychain)
+                        sign.assert_not_called()
+                        self.assertFalse(any(command[0] == "xcrun" for command in commands))
+
+    def test_failed_signing_probe_stops_before_xcodebuild(self):
+        with (patch.object(release, "signing_keychain", return_value=contextlib.nullcontext(self.directory / "signing.keychain-db")),
+              patch.object(release, "check_signing_identity", side_effect=RuntimeError("probe failed")) as probe,
+              patch.object(release, "run", return_value=b"") as execute):
+            with self.assertRaisesRegex(RuntimeError, "probe failed"):
+                release.build(self.directory)
+            probe.assert_called_once()
+            self.assertFalse(any(call.args[0][0] == "xcodebuild" for call in execute.call_args_list))
+
     def test_verification_pins_certificate_and_identifier_with_an_inline_requirement(self):
         with patch.object(release, "run", return_value=b"") as execute:
             release.verify_signature(Path("example.app"), release.APP_ID, deep=True)
