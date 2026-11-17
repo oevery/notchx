@@ -3,7 +3,7 @@ import Foundation
 
 /// Compatibility adapter for the probed Desktop protocol, not the public
 /// app-server protocol. Only talks to an existing, same-user Desktop router.
-/// No router creation, thread resume, configuration changes or automatic retry.
+/// No router creation, thread resume, configuration changes or input retry.
 enum CodexDesktopTransport {
     static func respond(approval: AgentApproval, decision: AgentHookDecision, owner: String, root: URL) async -> AgentMessageDelivery {
         guard decision == .allow && approval.canAllow || decision == .deny && approval.canDeny else { return .failed }
@@ -18,6 +18,13 @@ enum CodexDesktopTransport {
         guard request.sessionID == CodexAgentState.id(request.sessionID.sessionID), UUID(uuidString: request.sessionID.sessionID) != nil,
               !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               request.text.utf8.count <= 32_000, !Task.isCancelled else { return .failed }
+        guard request.mode == .queue else { return await invoke(root: root, owner: owner, action: .message(request)) }
+        let leases = CodexDesktopQueueLeases.shared
+        guard leases.begin(request.id.uuidString) else { return .failed }
+        defer { leases.end(request.id.uuidString) }
+        // Native removal can forward a stale whole queue after owner handoff.
+        // Leave uncertain reservations intact; neither freeze nor compensate
+        // until Desktop exposes an owner-fenced, ID-scoped delete operation.
         return await invoke(root: root, owner: owner, action: .message(request))
     }
 
@@ -56,7 +63,7 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
     private var clientID = "initializing-client"
     private var receivedBytes = 0
     private var deadline: TimeInterval = 0
-    private var queueConfirmation: (thread: String, owner: String, id: String)?
+    private var queueConfirmation: (thread: String, owner: String, id: String, text: String, marker: [String: Any]?)?
     private var queueObserved = false
 
     func cancel() {
@@ -140,12 +147,25 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
             case .queue:
                 let old = try CodexDesktopQueue.read(root: root, thread: thread)
                 guard !old.contains(where: { $0["id"] as? String == request.id.uuidString }) else { return .uncertain }
-                queueConfirmation = (thread, owner, request.id.uuidString)
-                let response = try exchange(fd, method: "thread-follower-set-queued-follow-ups-state", version: 1,
-                    params: ["conversationId": thread, "state": [thread: old + [CodexDesktopWire.restoreMessage(request)]],
-                        "discardedMessageIds": []], target: owner, mutation: true)
-                guard nativeDelivery(response, owner: owner) == .accepted else { return .uncertain }
-                return try confirmQueue(request, root: root, descriptor: fd)
+                let message = CodexDesktopWire.restoreMessage(request)
+                // Desktop v3's preparationMessageId selects an ID-scoped
+                // reserve/complete operation, reapplied to the owner's latest
+                // stored queue. Its preparation marker is tested for non-null
+                // only. Never send a read/modify/write snapshot of that queue.
+                for preparing in [true, false] {
+                    var entry = message
+                    let marker = preparing ? CodexDesktopQueueLeases.shared.marker(id: request.id.uuidString) : nil
+                    if let marker { entry["preparation"] = marker }
+                    queueConfirmation = (thread, owner, request.id.uuidString, request.text, marker)
+                    queueObserved = false
+                    let response = try exchange(fd, method: "thread-follower-set-queued-follow-ups-state", version: 3,
+                        params: ["conversationId": thread, "state": [thread: [entry]],
+                            "preparationMessageId": request.id.uuidString, "discardedMessageIds": []],
+                        target: owner, mutation: true)
+                    guard nativeDelivery(response, owner: owner) == .accepted else { return .uncertain }
+                    _ = try confirmQueue(thread: thread, root: root, descriptor: fd)
+                }
+                return .accepted
             }
         case .input(let response, let reviewed):
             guard fresh.turnID == response.turnID, fresh.context.pendingInput == reviewed, response.matches(reviewed),
@@ -187,10 +207,10 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
         }
     }
 
-    private func confirmQueue(_ request: AgentMessageRequest, root: URL, descriptor fd: Int32) throws -> AgentMessageDelivery {
+    private func confirmQueue(thread: String, root: URL, descriptor fd: Int32) throws -> AgentMessageDelivery {
         if queueObserved { return .accepted }
-        if let stored = try? CodexDesktopQueue.read(root: root, thread: request.sessionID.sessionID),
-           stored.contains(where: { $0["id"] as? String == request.id.uuidString && $0["text"] as? String == request.text }) { return .accepted }
+        if let stored = try? CodexDesktopQueue.read(root: root, thread: thread),
+           stored.contains(where: matchesQueueConfirmation) { return .accepted }
         // A queued entry can be consumed before file readback. The original
         // owner's correlated push is independent confirmation, even after ACK.
         // Bound the extra wait; never resend when neither proof arrives.
@@ -199,6 +219,18 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
         defer { deadline = previous }
         while !queueObserved { _ = try readMessage(fd) }
         return .accepted
+    }
+
+    private func matchesQueueConfirmation(_ message: [String: Any]) -> Bool {
+        guard let expected = queueConfirmation,
+              message["id"] as? String == expected.id,
+              message["text"] as? String == expected.text else { return false }
+        if let marker = expected.marker {
+            guard let actual = message["preparation"] as? [String: Any],
+                  NSDictionary(dictionary: actual).isEqual(to: marker) else { return false }
+            return message["pausedReason"] == nil || message["pausedReason"] is NSNull
+        }
+        return message["preparation"] == nil || message["preparation"] is NSNull
     }
 
     private func nativeDelivery(_ reply: [String: Any], owner: String) -> AgentMessageDelivery {
@@ -216,10 +248,10 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
         }
         if let expected = queueConfirmation,
            reply["type"] as? String == "broadcast", reply["method"] as? String == "thread-queued-followups-changed",
-           reply["version"] as? Int == 2, reply["sourceClientId"] as? String == expected.owner,
+           CodexDesktopProjection.integer(reply["version"]) == 3, reply["sourceClientId"] as? String == expected.owner,
            let params = reply["params"] as? [String: Any], params["hostId"] as? String == "local",
            params["conversationId"] as? String == expected.thread,
-           let messages = params["messages"] as? [[String: Any]], messages.contains(where: { $0["id"] as? String == expected.id }) {
+           let messages = params["messages"] as? [[String: Any]], messages.contains(where: matchesQueueConfirmation) {
             queueObserved = true
         }
         return reply
@@ -234,6 +266,7 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
             "version": version, "method": method, "params": params, "timeoutMs": 10_000]
         if let target { message["targetClientId"] = target }
         let frame = try CodexDesktopWire.frame(message)
+        let previouslySubmitted = submitted
         if mutation { submitted = true }
         try AgentUnixSocket.write(frame, to: fd, until: deadline)
         while true {
@@ -244,7 +277,7 @@ private final class CodexDesktopInvocation: @unchecked Sendable {
                 // After a mutation, an arbitrary Desktop exception can follow
                 // submission. Only routing/version rejection proves no send.
                 if !mutation || ["no-client-found", "request-version-mismatch", "no-handler-for-request"]
-                    .contains(reply["error"] as? String ?? "") { submitted = false }
+                    .contains(reply["error"] as? String ?? "") { submitted = previouslySubmitted }
                 throw AgentHookWireError.unavailable
             }
             guard reply["resultType"] as? String == "success", reply["method"] as? String == method else {
@@ -335,10 +368,22 @@ enum CodexDesktopWire {
     }
 }
 
-/// Read only the original thread's compatible local queue. The owner is the
-/// only writer; never edit its global state file or discard existing entries.
+/// Bounded readback only. Desktop remains the sole writer of its global state.
 enum CodexDesktopQueue {
     static func read(root: URL, thread: String) throws -> [[String: Any]] {
+        guard let value = try readObject(root: root)[thread] else { return [] }
+        return try messages(value)
+    }
+
+    private static func messages(_ value: Any) throws -> [[String: Any]] {
+        guard let messages = value as? [[String: Any]], messages.count < 500,
+              messages.allSatisfy({
+                  ($0["id"] as? String)?.isEmpty == false && $0["text"] is String && $0["context"] is [String: Any]
+              }) else { throw AgentHookWireError.invalidMessage }
+        return messages
+    }
+
+    private static func readObject(root: URL) throws -> [String: Any] {
         let fd = open(root.appendingPathComponent(".codex-global-state.json").path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw AgentHookWireError.unavailable }
         defer { close(fd) }
@@ -354,11 +399,8 @@ enum CodexDesktopQueue {
             if count == 0 { break }; data.append(contentsOf: buffer.prefix(count))
         }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw AgentHookWireError.invalidMessage }
-        guard let value = object["queued-follow-ups"] else { return [] }
+        guard let value = object["queued-follow-ups"] else { return [:] }
         guard let queues = value as? [String: Any] else { throw AgentHookWireError.invalidMessage }
-        guard let value = queues[thread] else { return [] }
-        guard let messages = value as? [[String: Any]], messages.count < 500,
-              messages.allSatisfy({ ($0["id"] as? String)?.isEmpty == false && $0["text"] is String && $0["context"] is [String: Any] }) else { throw AgentHookWireError.invalidMessage }
-        return messages
+        return queues
     }
 }

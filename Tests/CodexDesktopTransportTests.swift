@@ -6,8 +6,9 @@ import XCTest
 private final class DesktopSocketFixture: @unchecked Sendable {
     enum Outcome { case accepted, noOwner, disconnected, routingError, wrongOwner, malformed, holdAfterSubmission, unconfirmedQueue }
     enum QueuePush {
-        case beforeACK, afterACK, invalidReadback, wrongOwner, wrongThread, wrongID, wrongVersion, wrongHost
+        case beforeACK, afterACK, invalidReadback, wrongOwner, wrongThread, wrongID, wrongVersion, wrongHost, wrongText
     }
+    enum QueueRace { case appendAndConsume, cancelReservation, rejectCompletion, loseCompletionProof, loseCompletionACK, holdCompletion }
     let root: URL
     private let listener: Int32
     private let lock = NSLock()
@@ -15,7 +16,8 @@ private final class DesktopSocketFixture: @unchecked Sendable {
     private let onSubmission: (@Sendable () -> Void)?
     var requests: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return messages }
 
-    init(_ outcome: Outcome, onSubmission: (@Sendable () -> Void)? = nil, nativeState: [String: Any]? = nil, queuePush: QueuePush? = nil) throws {
+    init(_ outcome: Outcome, onSubmission: (@Sendable () -> Void)? = nil, nativeState: [String: Any]? = nil,
+         queuePush: QueuePush? = nil, queueRace: QueueRace? = nil) throws {
         self.onSubmission = onSubmission
         root = try AgentFixtures.directory()
         let path = root.appendingPathComponent("ipc/ipc.sock").path
@@ -33,20 +35,31 @@ private final class DesktopSocketFixture: @unchecked Sendable {
         let state = nativeState ?? ["id": AgentFixtures.thread, "hostId": "local", "threadSource": "user", "resumeState": "resumed",
             "threadRuntimeStatus": ["type": "idle", "activeFlags": []],
             "turns": [["turnId": "turn-1", "status": "completed", "items": []]], "requests": []]
-        DispatchQueue.global().async { [self] in serve(outcome, nativeState: state, queuePush: queuePush) }
+        DispatchQueue.global().async { [self] in serve(outcome, nativeState: state, queuePush: queuePush, queueRace: queueRace) }
     }
 
     deinit { close(listener); try? FileManager.default.removeItem(at: root) }
 
-    private func serve(_ outcome: Outcome, nativeState: [String: Any], queuePush: QueuePush?) {
+    private func serve(_ outcome: Outcome, nativeState: [String: Any], queuePush: QueuePush?, queueRace: QueueRace?) {
+        do {
+            while true {
+                try AgentUnixSocket.wait(listener, events: Int16(POLLIN), until: ProcessInfo.processInfo.systemUptime + 5)
+                let client = accept(listener, nil, nil)
+                guard client >= 0 else { return }
+                DispatchQueue.global().async { [self] in
+                    serveClient(client, outcome: outcome, nativeState: nativeState, queuePush: queuePush, queueRace: queueRace)
+                }
+            }
+        } catch { /* No further clients. */ }
+    }
+
+    private func serveClient(_ client: Int32, outcome: Outcome, nativeState: [String: Any], queuePush: QueuePush?, queueRace: QueueRace?) {
         do {
             let deadline = ProcessInfo.processInfo.systemUptime + 5
-            try AgentUnixSocket.wait(listener, events: Int16(POLLIN), until: deadline)
-            let client = accept(listener, nil, nil)
-            guard client >= 0 else { return }
             defer { close(client) }
             var enabled: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
+            var ownerQueue: [[String: Any]]?
             while true {
                 func readBytes(_ count: Int) throws -> Data {
                     var result = Data()
@@ -65,8 +78,24 @@ private final class DesktopSocketFixture: @unchecked Sendable {
                       let request = try JSONSerialization.jsonObject(with: readBytes(count)) as? [String: Any],
                       let method = request["method"] as? String else { return }
                 lock.lock(); messages.append(request); lock.unlock()
+                // Contracts observed in Desktop 26.1111.21308. A fixture must
+                // reject obsolete request versions instead of hiding drift.
+                let expectedVersion: Int
+                switch method {
+                case "initialize": expectedVersion = 0
+                case "thread-follower-start-turn": expectedVersion = 2
+                case "thread-follower-set-queued-follow-ups-state": expectedVersion = 3
+                default: expectedVersion = 1
+                }
+                guard request["version"] as? Int == expectedVersion else {
+                    try AgentUnixSocket.write(CodexDesktopWire.frame(["type": "response",
+                        "requestId": request["requestId"] ?? NSNull(), "resultType": "error",
+                        "error": "request-version-mismatch"]), to: client, until: deadline)
+                    return
+                }
                 var response: [String: Any] = ["type": "response", "requestId": request["requestId"] ?? NSNull(),
                     "resultType": "success", "method": method, "handledByClientId": "fixture-owner"]
+                var queuePushEntries: [[String: Any]]?
                 switch method {
                 case "initialize": response["result"] = ["clientId": "fixture-client"]
                 case "thread-owner-discovery":
@@ -75,24 +104,73 @@ private final class DesktopSocketFixture: @unchecked Sendable {
                 case "thread-follower-read-model-settings": response["result"] = ["settings": ["resumeState": "resumed"]]
                 case "thread-stream-following-changed":
                     guard let params = request["params"] as? [String: Any], params["following"] as? Bool == true else { return }
-                    response = ["type": "broadcast", "method": "thread-stream-state-changed", "version": 11,
+                    response = ["type": "broadcast", "method": "thread-stream-state-changed", "version": 13,
                         "sourceClientId": "fixture-owner", "params": ["conversationId": AgentFixtures.thread, "hostId": "local",
                         "change": ["type": "snapshot", "revision": 1, "conversationState": nativeState]]]
                 default:
                     onSubmission?()
+                    if method == "thread-follower-set-queued-follow-ups-state" {
+                        let params = try XCTUnwrap(request["params"] as? [String: Any])
+                        let state = try XCTUnwrap(params["state"] as? [String: [[String: Any]]])
+                        let entries = try XCTUnwrap(state[AgentFixtures.thread])
+                        let id = try XCTUnwrap(params["preparationMessageId"] as? String)
+                        let entry = try XCTUnwrap(entries.first(where: { $0["id"] as? String == id }))
+                        XCTAssertEqual(entries.count, 1, "An append must never replace the owner's queue snapshot")
+                        if ownerQueue == nil { ownerQueue = try CodexDesktopQueue.read(root: root, thread: AgentFixtures.thread) }
+                        var current = ownerQueue ?? []
+                        let preparing = entry["preparation"] != nil
+                        let reserving = preparing && entry["pausedReason"] == nil
+                        let freezing = preparing && !reserving
+                        if !preparing && queueRace == .holdCompletion {
+                            try AgentUnixSocket.wait(client, events: Int16(POLLIN), until: deadline)
+                            var byte: UInt8 = 0
+                            _ = Darwin.read(client, &byte, 1)
+                            return
+                        }
+                        if queueRace == .appendAndConsume {
+                            if reserving { current.append(["id": "concurrent", "text": "Desktop appended", "context": ["prompt": "Desktop appended"]]) }
+                            else { current.removeAll { $0["id"] as? String == "prior" } }
+                        }
+                        if !preparing && queueRace == .cancelReservation { current.removeAll { $0["id"] as? String == id } }
+                        // Model the external owner's ID-scoped v3 contract:
+                        // reserve only absent IDs, complete only live reservations.
+                        if !preparing && queueRace == .rejectCompletion {
+                            response["resultType"] = "error"; response["error"] = "request-version-mismatch"
+                        } else if reserving {
+                            if !current.contains(where: { $0["id"] as? String == id }) { current.append(entry) }
+                        } else if freezing || queueRace != .loseCompletionProof {
+                            if let index = current.firstIndex(where: {
+                                $0["id"] as? String == id && $0["preparation"] != nil && $0["pausedReason"] == nil
+                            }) {
+                                current[index] = entry
+                            } else if !preparing {
+                                response["resultType"] = "error"; response["error"] = "Queued message preparation was canceled"
+                            }
+                        }
+                        ownerQueue = current
+                        queuePushEntries = current
+                        if outcome == .accepted { try persistQueue(current) }
+                    } else if method == "thread-follower-remove-queued-message" || method == "thread-follower-clear-queued-messages" {
+                        XCTFail("Native removal can overwrite concurrent messages after owner handoff; never use it for compensation")
+                        return
+                    }
                     func pushQueue() throws {
                         guard let queuePush, method == "thread-follower-set-queued-follow-ups-state",
-                              let state = (request["params"] as? [String: Any])?["state"] as? [String: [[String: Any]]],
-                              var entries = state[AgentFixtures.thread] else { return }
+                              var entries = queuePushEntries else { return }
                         if queuePush == .wrongID { entries[entries.count - 1]["id"] = UUID().uuidString }
+                        if queuePush == .wrongText { entries[entries.count - 1]["text"] = "Different content" }
                         if queuePush == .invalidReadback { try Data("invalid fixture".utf8).write(to: root.appendingPathComponent(".codex-global-state.json")) }
                         try AgentUnixSocket.write(CodexDesktopWire.frame(["type": "broadcast", "method": "thread-queued-followups-changed",
-                            "version": queuePush == .wrongVersion ? 1 : 2,
+                            "version": queuePush == .wrongVersion ? 2 : 3,
                             "sourceClientId": queuePush == .wrongOwner ? "other-owner" : "fixture-owner",
                             "params": ["conversationId": queuePush == .wrongThread ? UUID().uuidString : AgentFixtures.thread,
                                 "hostId": queuePush == .wrongHost ? "remote" : "local", "messages": entries]]), to: client, until: deadline)
                     }
                     if queuePush != .afterACK { try pushQueue() }
+                    if queueRace == .loseCompletionACK,
+                       method == "thread-follower-set-queued-follow-ups-state",
+                       let state = (request["params"] as? [String: Any])?["state"] as? [String: [[String: Any]]],
+                       state[AgentFixtures.thread]?.first?["preparation"] == nil { return }
                     if outcome == .holdAfterSubmission {
                         try AgentUnixSocket.wait(client, events: Int16(POLLIN), until: deadline)
                         var byte: UInt8 = 0
@@ -107,25 +185,14 @@ private final class DesktopSocketFixture: @unchecked Sendable {
                     if outcome == .wrongOwner { response["handledByClientId"] = "other-owner" }
                     if method == "thread-follower-start-turn" { response["result"] = ["result": ["turn": ["id": UUID().uuidString]]] }
                     else if method == "thread-follower-steer-turn" { response["result"] = ["result": ["turnId": "turn-1"]] }
-                    else {
-                        response["result"] = ["ok": true]
-                        if method == "thread-follower-set-queued-follow-ups-state", outcome != .unconfirmedQueue,
-                           let params = request["params"] as? [String: Any], let queued = params["state"] as? [String: Any] {
-                            let path = root.appendingPathComponent(".codex-global-state.json")
-                            var object = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
-                            var queues = object["queued-follow-ups"] as? [String: Any] ?? [:]
-                            for (key, value) in queued { queues[key] = value }
-                            object["queued-follow-ups"] = queues
-                            try JSONSerialization.data(withJSONObject: object).write(to: path, options: .atomic)
-                        }
-                    }
+                    else { response["result"] = ["ok": true] }
                 }
                 // Exercise fragmented length prefixes and UTF-8 frames.
                 let frame = try CodexDesktopWire.frame(response)
                 try AgentUnixSocket.write(Data(frame.prefix(2)), to: client, until: deadline)
                 try AgentUnixSocket.write(Data(frame.dropFirst(2)), to: client, until: deadline)
                 if method == "thread-follower-set-queued-follow-ups-state", let queuePush,
-                   [.wrongOwner, .wrongThread, .wrongID, .wrongVersion, .wrongHost].contains(queuePush) {
+                   [.wrongOwner, .wrongThread, .wrongID, .wrongVersion, .wrongHost, .wrongText].contains(queuePush) {
                     // The invalid push precedes a valid ACK on the same stream, so
                     // the real parser must consume it before delivery is decided.
                     // EOF now means no further proof, instead of five identical
@@ -133,13 +200,22 @@ private final class DesktopSocketFixture: @unchecked Sendable {
                     return
                 }
                 if method == "thread-follower-set-queued-follow-ups-state", queuePush == .afterACK,
-                   let entries = (request["params"] as? [String: Any])?["state"] as? [String: [[String: Any]]] {
+                   let entries = queuePushEntries {
                     try AgentUnixSocket.write(CodexDesktopWire.frame(["type": "broadcast", "method": "thread-queued-followups-changed",
-                        "version": 2, "sourceClientId": "fixture-owner", "params": ["conversationId": AgentFixtures.thread,
-                            "hostId": "local", "messages": entries[AgentFixtures.thread] ?? []]]), to: client, until: deadline)
+                        "version": 3, "sourceClientId": "fixture-owner", "params": ["conversationId": AgentFixtures.thread,
+                            "hostId": "local", "messages": entries]]), to: client, until: deadline)
                 }
             }
         } catch { /* A cancelled/disconnected client is expected in several fixtures. */ }
+    }
+
+    private func persistQueue(_ current: [[String: Any]]) throws {
+        let path = root.appendingPathComponent(".codex-global-state.json")
+        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+        var queues = object["queued-follow-ups"] as? [String: Any] ?? [:]
+        queues[AgentFixtures.thread] = current
+        object["queued-follow-ups"] = queues
+        try JSONSerialization.data(withJSONObject: object).write(to: path, options: .atomic)
     }
 }
 
@@ -184,17 +260,120 @@ final class CodexDesktopTransportTests: XCTestCase {
             let result = await CodexDesktopTransport.send(message, root: fixture.root, owner: "fixture-owner")
             XCTAssertEqual(result, outcome == .accepted ? .accepted : .uncertain)
             let writes = fixture.requests.filter { $0["method"] as? String == "thread-follower-set-queued-follow-ups-state" }
-            XCTAssertEqual(writes.count, 1, "No retry after a missing acknowledgement or uncertain readback")
+            XCTAssertEqual(writes.count, outcome == .accepted ? 2 : 1, "Complete only a confirmed reservation; never retry")
+            XCTAssertEqual(writes.first?["version"] as? Int, 3)
             let params = try XCTUnwrap(writes.first?["params"] as? [String: Any])
             let state = try XCTUnwrap(params["state"] as? [String: [[String: Any]]])
             XCTAssertEqual(Set(state.keys), [AgentFixtures.thread], "Do not write another conversation's queue")
             let entries = try XCTUnwrap(state[AgentFixtures.thread])
-            XCTAssertEqual(entries.count, 2)
-            XCTAssertTrue(NSDictionary(dictionary: entries[0]).isEqual(to: prior))
-            XCTAssertEqual(entries[1]["id"] as? String, message.id.uuidString)
-            XCTAssertEqual(entries[1]["text"] as? String, message.text)
+            XCTAssertEqual(entries.count, 1)
+            XCTAssertEqual(entries[0]["id"] as? String, message.id.uuidString)
+            XCTAssertEqual(entries[0]["text"] as? String, message.text)
+            XCTAssertEqual(params["preparationMessageId"] as? String, message.id.uuidString)
+            XCTAssertNotNil(entries[0]["preparation"])
             XCTAssertTrue((params["discardedMessageIds"] as? [String])?.isEmpty == true)
+            if outcome == .accepted {
+                let stored = try CodexDesktopQueue.read(root: fixture.root, thread: AgentFixtures.thread)
+                XCTAssertEqual(stored.count, 2)
+                XCTAssertTrue(NSDictionary(dictionary: stored[0]).isEqual(to: prior))
+                XCTAssertEqual(stored[1]["id"] as? String, message.id.uuidString)
+                XCTAssertNil(stored[1]["preparation"])
+                let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
+                XCTAssertEqual(saved["unrelated"] as? String, "preserve")
+                let other = try CodexDesktopQueue.read(root: fixture.root, thread: foreign)
+                XCTAssertEqual(other.count, 1)
+                XCTAssertTrue(NSDictionary(dictionary: other[0]).isEqual(to: prior))
+            }
         }
+    }
+
+    func testQueueAppendPreservesConcurrentAdditionAndDoesNotRestoreConsumedMessage() async throws {
+        let fixture = try DesktopSocketFixture(.accepted, nativeState: messageState(), queueRace: .appendAndConsume)
+        let path = fixture.root.appendingPathComponent(".codex-global-state.json")
+        try JSONSerialization.data(withJSONObject: ["queued-follow-ups": [
+            AgentFixtures.thread: [["id": "prior", "text": "Consumed by Desktop", "context": ["prompt": "Consumed by Desktop"]]]
+        ]]).write(to: path)
+        let message = AgentMessageRequest(id: UUID(), sessionID: request.sessionID, turnID: "turn-1", mode: .queue, text: "append once")
+        let result = await CodexDesktopTransport.send(message, root: fixture.root, owner: "fixture-owner")
+        XCTAssertEqual(result, .accepted)
+        let stored = try CodexDesktopQueue.read(root: fixture.root, thread: AgentFixtures.thread)
+        XCTAssertEqual(stored.compactMap { $0["id"] as? String }, ["concurrent", message.id.uuidString])
+        XCTAssertNil(stored.last?["preparation"])
+    }
+
+    func testQueueCompletionCannotResurrectCanceledReservationOrUseReservationAsProof() async throws {
+        for race in [DesktopSocketFixture.QueueRace.cancelReservation, .rejectCompletion, .loseCompletionProof, .loseCompletionACK] {
+            let fixture = try DesktopSocketFixture(.accepted, nativeState: messageState(), queuePush: .beforeACK, queueRace: race)
+            try Data("{}".utf8).write(to: fixture.root.appendingPathComponent(".codex-global-state.json"))
+            let message = AgentMessageRequest(id: UUID(), sessionID: request.sessionID, turnID: "turn-1", mode: .queue, text: "original only")
+            let result = await CodexDesktopTransport.send(message, root: fixture.root, owner: "fixture-owner")
+            XCTAssertEqual(result, .uncertain, "A reserved message is not a completed append: \(race)")
+            XCTAssertEqual(fixture.requests.filter { $0["method"] as? String == "thread-follower-set-queued-follow-ups-state" }.count, 2)
+            XCTAssertEqual(fixture.requests.filter { $0["method"] as? String == "thread-follower-remove-queued-message" }.count, 0)
+            let stored = try CodexDesktopQueue.read(root: fixture.root, thread: AgentFixtures.thread)
+            if race == .cancelReservation { XCTAssertTrue(stored.isEmpty) }
+            else if race == .loseCompletionACK {
+                XCTAssertEqual(stored.count, 1)
+                XCTAssertNil(stored.first?["preparation"], "A committed completion without its owner ACK still has an uncertain outcome")
+            } else {
+                XCTAssertEqual(stored.count, 1)
+                XCTAssertEqual(stored.first?["id"] as? String, message.id.uuidString)
+                XCTAssertNotNil(stored.first?["preparation"])
+                XCTAssertNil(stored.first?["pausedReason"], "Do not freeze a reservation without a safe way to remove it")
+            }
+        }
+    }
+
+    @MainActor func testDesktopChannelStartAndRefreshLeaveAbandonedReservationsUntouched() async throws {
+        let received = expectation(description: "Read-only subscription receives a snapshot")
+        received.assertForOverFulfill = false
+        let fixture = try DesktopSocketFixture(.accepted, nativeState: messageState())
+        let id = UUID().uuidString
+        let abandoned: [String: Any] = ["id": id, "text": "Interrupted", "context": ["prompt": "Interrupted"],
+            "preparation": ["owner": "notchx", "version": 1, "messageId": id,
+                "processId": Int(getpid()), "instanceId": UUID().uuidString]]
+        let concurrent: [String: Any] = ["id": "desktop-added", "text": "Keep", "context": [:]]
+        try store([abandoned, concurrent], in: fixture)
+        let channel = CodexDesktopStatusChannel(root: fixture.root)
+        defer { channel.stop() }
+        channel.start(threads: [AgentFixtures.thread]) { update in
+            if case .snapshot = update { received.fulfill() }
+        }
+        channel.updateThreads([AgentFixtures.thread])
+        await fulfillment(of: [received], timeout: 3)
+        let stored = try CodexDesktopQueue.read(root: fixture.root, thread: AgentFixtures.thread)
+        XCTAssertTrue(NSArray(array: stored).isEqual(to: [abandoned, concurrent]))
+        XCTAssertFalse(fixture.requests.contains {
+            ($0["method"] as? String)?.hasPrefix("thread-follower-") == true
+                && $0["method"] as? String != "thread-follower-read-model-settings"
+        }, "Starting or refreshing status must not mutate abandoned queues")
+    }
+
+    func testCancelledQueueSubmissionLeavesReservationWithoutUnsafeCompensation() async throws {
+        let completionStarted = expectation(description: "Both reservation and completion requests reached Desktop")
+        completionStarted.expectedFulfillmentCount = 2
+        completionStarted.assertForOverFulfill = false
+        let fixture = try DesktopSocketFixture(.accepted, onSubmission: { completionStarted.fulfill() },
+            nativeState: messageState(), queueRace: .holdCompletion)
+        try store([], in: fixture)
+        let message = AgentMessageRequest(id: UUID(), sessionID: request.sessionID, turnID: "turn-1", mode: .queue, text: "cancel during completion")
+        let task = Task { await CodexDesktopTransport.send(message, root: fixture.root, owner: "fixture-owner") }
+        await fulfillment(of: [completionStarted], timeout: 3)
+        task.cancel()
+        let result = await task.value
+        XCTAssertEqual(result, .uncertain)
+        let stored = try CodexDesktopQueue.read(root: fixture.root, thread: AgentFixtures.thread)
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertEqual(stored.first?["id"] as? String, message.id.uuidString)
+        XCTAssertNotNil(stored.first?["preparation"])
+        XCTAssertNil(stored.first?["pausedReason"])
+        XCTAssertEqual(fixture.requests.filter { $0["method"] as? String == "thread-follower-set-queued-follow-ups-state" }.count, 2)
+        XCTAssertFalse(fixture.requests.contains { $0["method"] as? String == "thread-follower-remove-queued-message" })
+    }
+
+    private func store(_ entries: [[String: Any]], in fixture: DesktopSocketFixture) throws {
+        try JSONSerialization.data(withJSONObject: ["queued-follow-ups": [AgentFixtures.thread: entries]])
+            .write(to: fixture.root.appendingPathComponent(".codex-global-state.json"), options: .atomic)
     }
 
     func testMessagePreflightRejectsChangedOwnerTurnAndWaitingStateWithoutSubmission() async throws {
@@ -232,12 +411,12 @@ final class CodexDesktopTransportTests: XCTestCase {
             let message = AgentMessageRequest(id: UUID(), sessionID: request.sessionID, turnID: "turn-1", mode: .queue, text: "consumed before readback")
             let result = await CodexDesktopTransport.send(message, root: fixture.root, owner: "fixture-owner")
             XCTAssertEqual(result, .accepted, "Confirmed push must survive consumed/missing readback: \(push)")
-            XCTAssertEqual(fixture.requests.filter { $0["method"] as? String == "thread-follower-set-queued-follow-ups-state" }.count, 1)
+            XCTAssertEqual(fixture.requests.filter { $0["method"] as? String == "thread-follower-set-queued-follow-ups-state" }.count, 2)
         }
     }
 
     func testUnrelatedQueuePushCannotConfirmAnOriginalSessionMessage() async throws {
-        for push in [DesktopSocketFixture.QueuePush.wrongOwner, .wrongThread, .wrongID, .wrongVersion, .wrongHost] {
+        for push in [DesktopSocketFixture.QueuePush.wrongOwner, .wrongThread, .wrongID, .wrongVersion, .wrongHost, .wrongText] {
             let fixture = try DesktopSocketFixture(.unconfirmedQueue, nativeState: messageState(), queuePush: push)
             try Data("{}".utf8).write(to: fixture.root.appendingPathComponent(".codex-global-state.json"))
             let message = AgentMessageRequest(id: UUID(), sessionID: request.sessionID, turnID: "turn-1", mode: .queue, text: "original only")

@@ -43,11 +43,26 @@ final class CodexReadOnlySourceTests: XCTestCase {
     }
 
     func testUnknownSchemaFailsClosed() {
-        for fixture in ["unsupported", "malformed"] {
+        for fixture in ["unsupported", "malformed", "production-unsupported", "production-escape"] {
             let result = snapshot(fixture)
             XCTAssertEqual(result.connection, .unsupportedSchema)
             XCTAssertTrue(result.events.isEmpty)
         }
+    }
+
+    func testProductionCatalogWinsOverStaleDevelopmentMetadata() {
+        for name in ["production", "both"] {
+            let result = snapshot(name)
+            XCTAssertEqual(result.connection, .connected)
+            XCTAssertEqual(result.events.map(\.id.sessionID), ["current-user"])
+            XCTAssertTrue(result.events.allSatisfy { $0.status == .unknown })
+        }
+    }
+
+    func testDanglingProductionCatalogDoesNotFallBackToDevelopment() {
+        let result = snapshot("production-dangling")
+        XCTAssertNotEqual(result.connection, .connected)
+        XCTAssertTrue(result.events.isEmpty)
     }
 
     func testCatalogSymlinkEscapeRejected() {
@@ -75,13 +90,13 @@ final class CodexReadOnlySourceTests: XCTestCase {
         XCTAssertTrue(result.events.isEmpty)
     }
 
-    func testOnlySupportedUserTaggedMetadataAppearsAndDeduplicates() {
+    func testCatalogFiltersHostSourceAndInvalidMetadata() {
         let result = snapshot("catalog")
 #if canImport(SQLite3)
         XCTAssertEqual(result.connection, .connected)
         XCTAssertEqual(Set(result.events.map(\.id.sessionID)), ["thread-user-1", "thread-user-2", "local-vscode-user"])
         XCTAssertEqual(result.events.count, 3)
-        // Invalid newer duplicate timestamps must not suppress valid metadata.
+        // A remote row with the same thread ID cannot replace local metadata.
         XCTAssertEqual(result.events.first(where: { $0.id.sessionID == "thread-user-1" })?.updatedAt.timeIntervalSince1970, 1_792_238_400)
         XCTAssertTrue(result.events.allSatisfy { $0.status == .unknown && $0.summary == nil && $0.runID == nil && $0.requestID == nil && $0.parentID == nil })
         XCTAssertTrue(result.events.allSatisfy { $0.classification == .userSession })
@@ -136,8 +151,7 @@ final class CodexReadOnlySourceTests: XCTestCase {
     }
 }
 
-/// Native XCTest and the portable harness share these synthetic fixtures. They
-/// never depend on the developer's Codex installation or external environment.
+/// Synthetic catalog fixtures never depend on the developer's installation.
 private final class CodexCatalogFixtures {
     let root: URL
     private var originals: [URL: Data] = [:]
@@ -152,32 +166,43 @@ private final class CodexCatalogFixtures {
         try database("unsupported", sql: "CREATE TABLE unsupported (id TEXT)")
         try database("catalog", sql: Self.schema + """
         INSERT INTO local_thread_catalog VALUES
-        ('thread-user-1',1e999,'chatgpt','user','Metadata title 1',0,'fixture-host'),
-        ('thread-user-1',1792238400,'chatgpt','user','Metadata title 1',0,'fixture-host'),
-        ('thread-user-2',1792238300,'chatgpt','user','Metadata title 2',0,'fixture-host'),
+        ('thread-user-1',1792238400,'chatgpt','user','Metadata title 1',0,'local'),
+        ('thread-user-2',1792238300,'chatgpt','user','Metadata title 2',0,'local'),
         ('thread-user-1',1792238200,'chatgpt','user','Metadata title old',0,'other-host'),
-        ('local-vscode-user',1792238100.125,'vscode','user','Metadata title local',0,'fixture-host'),
-        ('unknown-transport',1792238050,'unknown','user','Unknown transport',0,'fixture-host'),
-        ('nonfinite-time',1e999,'vscode','user','Nonfinite',0,'fixture-host'),
-        ('null-time',NULL,'vscode','user','Null time',0,'fixture-host'),
-        ('invalid-time',-1,'vscode','user','Invalid time',0,'fixture-host'),
-        ('missing-session',1792238040,'vscode','user','Missing',1,'fixture-host'),
-        ('unknown-missing',1792238030,'vscode','user','Unknown missing',NULL,'fixture-host'),
-        ('unknown-origin',1792238000,'chatgpt',NULL,'Unknown origin',0,'fixture-host'),
-        ('internal-automation',1792237900,'chatgpt','automation','Automation',0,'fixture-host'),
-        ('bad/id',1792237800,'chatgpt','user','Bad ID',0,'fixture-host');
+        ('local-vscode-user',1792238100.125,'vscode','user','Metadata title local',0,'local'),
+        ('remote-user',1792238401,'vscode','user','Remote host',0,'remote-host'),
+        ('unknown-transport',1792238050,'unknown','user','Unknown transport',0,'local'),
+        ('nonfinite-time',1e999,'vscode','user','Nonfinite',0,'local'),
+        ('null-time',NULL,'vscode','user','Null time',0,'local'),
+        ('invalid-time',-1,'vscode','user','Invalid time',0,'local'),
+        ('missing-session',1792238040,'vscode','user','Missing',1,'local'),
+        ('unknown-missing',1792238030,'vscode','user','Unknown missing',NULL,'local'),
+        ('unknown-origin',1792238000,'chatgpt',NULL,'Unknown origin',0,'local'),
+        ('internal-automation',1792237900,'chatgpt','automation','Automation',0,'local'),
+        ('bad/id',1792237800,'chatgpt','user','Bad ID',0,'local');
         """)
-        let rows = (0..<80).map { "('thread-\($0)',\(1792238400 + $0),'chatgpt','user','Metadata title',0,'fixture-host')" }.joined(separator: ",")
+        let current = Self.schema + "INSERT INTO local_thread_catalog VALUES ('current-user',1792238500,'vscode','user','Current metadata',0,'local');"
+        let stale = Self.schema + "INSERT INTO local_thread_catalog VALUES ('stale-user',1792238400,'vscode','user','Stale metadata',0,'local');"
+        try database("production", sql: current, filename: "codex.db")
+        try database("both", sql: current, filename: "codex.db")
+        try database("both", sql: stale)
+        try database("production-unsupported", sql: "CREATE TABLE unsupported (id TEXT)", filename: "codex.db")
+        try database("production-unsupported", sql: stale)
+        try database("production-escape", sql: stale)
+        try database("production-dangling", sql: stale)
+        let rows = (0..<80).map { "('thread-\($0)',\(1792238400 + $0),'chatgpt','user','Metadata title',0,'local')" }.joined(separator: ",")
         try database("many", sql: Self.schema + "INSERT INTO local_thread_catalog VALUES " + rows + ";")
         try database("sidecar-escape", sql: Self.schema)
-        let walURL = try database("wal", sql: Self.schema + "INSERT INTO local_thread_catalog VALUES ('thread-wal',1792238400,'chatgpt','user','Metadata title WAL',0,'fixture-host');")
+        let walURL = try database("wal", sql: Self.schema + "INSERT INTO local_thread_catalog VALUES ('thread-wal',1792238400,'chatgpt','user','Metadata title WAL',0,'local');")
         guard sqlite3_open_v2(walURL.path, &walWriter, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let walWriter else {
             throw NSError(domain: "CodexFixture", code: 1)
         }
-        try execute("PRAGMA journal_mode=WAL; INSERT INTO local_thread_catalog VALUES ('thread-wal-2',1792238401,'chatgpt','user','Metadata title WAL 2',0,'fixture-host');", on: walWriter)
+        try execute("PRAGMA journal_mode=WAL; INSERT INTO local_thread_catalog VALUES ('thread-wal-2',1792238401,'chatgpt','user','Metadata title WAL 2',0,'local');", on: walWriter)
 #endif
         let outside = root.appendingPathComponent("outside.db")
         try Data("Not a database".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("production-escape/sqlite/codex.db"), withDestinationURL: outside)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("production-dangling/sqlite/codex.db"), withDestinationURL: root.appendingPathComponent("absent.db"))
         let malformed = root.appendingPathComponent("malformed/sqlite/codex-dev.db")
         try FileManager.default.createDirectory(at: malformed.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("Malformed SQLite fixture".utf8).write(to: malformed)
@@ -212,11 +237,11 @@ private final class CodexCatalogFixtures {
     }
 
 #if canImport(SQLite3)
-    private static let schema = "CREATE TABLE local_thread_catalog (thread_id TEXT, source_updated_at REAL, source_kind TEXT, thread_source TEXT, display_title TEXT, missing_candidate INTEGER, host_id TEXT);"
+    private static let schema = "CREATE TABLE local_thread_catalog (thread_id TEXT NOT NULL, source_updated_at REAL, source_kind TEXT, thread_source TEXT, display_title TEXT, missing_candidate INTEGER, host_id TEXT NOT NULL, PRIMARY KEY (host_id, thread_id));"
 
     @discardableResult
-    private func database(_ name: String, sql: String) throws -> URL {
-        let url = root.appendingPathComponent(name + "/sqlite/codex-dev.db")
+    private func database(_ name: String, sql: String, filename: String = "codex-dev.db") throws -> URL {
+        let url = root.appendingPathComponent(name + "/sqlite/" + filename)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var database: OpaquePointer?
         guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK, let database else {

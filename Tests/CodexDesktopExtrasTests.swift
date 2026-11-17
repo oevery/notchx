@@ -9,7 +9,7 @@ final class CodexDesktopExtrasTests: XCTestCase {
             "threadRuntimeStatus": ["type": terminal ? "idle" : "active", "activeFlags": []], "requests": [],
             "turns": [["turnId": "turn-1", "status": terminal ? "completed" : "inProgress", "items": items]]]
         var stream = CodexDesktopStreamState(thread: AgentFixtures.thread, owner: "owner")
-        let result = stream.consume(["type": "broadcast", "method": "thread-stream-state-changed", "version": 11,
+        let result = stream.consume(["type": "broadcast", "method": "thread-stream-state-changed", "version": 13,
             "sourceClientId": "owner", "params": ["conversationId": AgentFixtures.thread, "hostId": "local",
                 "change": ["type": "snapshot", "revision": 1, "conversationState": state]]])
         guard case .snapshot(let value) = result else { XCTFail("Expected projection"); throw AgentHookWireError.invalidMessage }

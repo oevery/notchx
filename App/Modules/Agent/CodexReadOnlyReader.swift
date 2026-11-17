@@ -67,10 +67,15 @@ actor CodexReadOnlyReader {
 #if canImport(SQLite3)
 extension CodexReadOnlyReader {
     private func readDatabase() throws -> CodexReadOnlySnapshot {
-        // Compatibility gate: only the catalog shape observed in Desktop
-        // 26.1013.40934 is supported. No fallback to inaccessible state databases,
-        // transcript directories, configuration files, sockets or credentials.
-        let databaseURL = root.appendingPathComponent("sqlite/codex-dev.db")
+        // Desktop 26.1111.21308 uses codex.db for production builds. Prefer it
+        // even when an obsolete development catalog remains. Only absence
+        // permits the known development filename; a rejected production file
+        // must never silently fall back to stale metadata.
+        let production = root.appendingPathComponent("sqlite/codex.db")
+        var productionInfo = stat()
+        let exists = lstat(production.path, &productionInfo) == 0
+        if !exists, errno != ENOENT { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        let databaseURL = exists ? production : root.appendingPathComponent("sqlite/codex-dev.db")
         guard FileManager.default.fileExists(atPath: databaseURL.path) else {
             return .init(connection: .disconnected)
         }
@@ -121,7 +126,7 @@ extension CodexReadOnlyReader {
         // This catalog tags local user sessions; it does NOT establish which
         // client created them, nor distinguish every internal session. Transport
         // names are not Desktop provenance. Runtime activity remains unknown.
-        let sql = "SELECT substr(thread_id,1,200), source_updated_at, substr(display_title,1,160) FROM local_thread_catalog WHERE source_kind IN ('chatgpt','vscode') AND thread_source='user' AND missing_candidate=0 AND typeof(source_updated_at) IN ('real','integer') ORDER BY source_updated_at DESC LIMIT \(Self.maximumSessions)"
+        let sql = "SELECT substr(thread_id,1,200), source_updated_at, substr(display_title,1,160) FROM local_thread_catalog WHERE host_id='local' AND source_kind IN ('chatgpt','vscode') AND thread_source='user' AND missing_candidate=0 AND typeof(source_updated_at) IN ('real','integer') ORDER BY source_updated_at DESC LIMIT \(Self.maximumSessions)"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
             return .init(connection: .unsupportedSchema)

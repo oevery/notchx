@@ -18,7 +18,7 @@ private enum DesktopStatusFixtures {
           ]]]]
     }
     static func message(_ change: [String: Any], owner: String = owner, thread: String = thread) -> [String: Any] {
-        ["type": "broadcast", "method": "thread-stream-state-changed", "sourceClientId": owner, "version": 11,
+        ["type": "broadcast", "method": "thread-stream-state-changed", "sourceClientId": owner, "version": 13,
          "params": ["conversationId": thread, "hostId": "local", "change": change]]
     }
     static func snapshot(_ state: [String: Any] = state(), revision: Int64 = 1) -> [String: Any] {
@@ -185,6 +185,81 @@ private final class DesktopStatusSocket: @unchecked Sendable {
 }
 
 final class CodexDesktopStatusChannelTests: XCTestCase {
+    /// Explicit opt-in only: the normal Core plan never reads the user's
+    /// catalog or connects to Desktop. This probe only follows one existing
+    /// session and never sends input, queues messages or answers approvals.
+    @MainActor func testInstalledDesktopReadOnlyConnectionWhenExplicitlyRequested() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["NOTCHX_CODEX_PROBE_ROOT"],
+              let thread = environment["NOTCHX_CODEX_PROBE_THREAD"] else {
+            throw XCTSkip("Requires an explicitly selected local Codex root and existing thread")
+        }
+        _ = try XCTUnwrap(UUID(uuidString: thread), "Probe thread must be a UUID")
+        let root = URL(fileURLWithPath: path)
+        let catalog = await CodexReadOnlyReader(root: root).snapshot()
+        XCTAssertEqual(catalog.connection, .connected)
+        XCTAssertTrue(catalog.events.contains { $0.id.sessionID == thread }, "Current session must be discoverable")
+        let channel = CodexDesktopStatusChannel(root: root)
+        defer { channel.stop() }
+        let received = expectation(description: "Installed Desktop supplies a verified current session")
+        var delivered = false
+        channel.start(threads: [thread]) { update in
+            // Optimistic turns and split lifecycle patches can briefly publish
+            // an incomplete snapshot. Wait for a usable current turn.
+            guard case .snapshot(let snapshot) = update, !delivered,
+                  snapshot.threadID == thread, snapshot.classification == .userSession,
+                  snapshot.ownerID != nil, snapshot.turnID != nil,
+                  snapshot.status == .running,
+                  snapshot.capabilities.contains([.lifecycle, .steer, .queue]) else { return }
+            delivered = true
+            received.fulfill()
+        }
+        await fulfillment(of: [received], timeout: 10)
+    }
+
+    func testVersion13CanonicalPatchesKeepPublicProgressWithoutReplayingTextEdits() throws {
+        var document = DesktopStatusFixtures.state(items: [
+            ["id": "progress", "type": "agentMessage", "phase": "commentary", "text": "检查"],
+            ["id": "reason", "type": "reasoning", "summary": ["PRIVATE_REASONING"]],
+            ["id": "final", "type": "agentMessage", "phase": "final_answer", "text": "PRIVATE_FINAL"]
+        ])
+        let turn = try XCTUnwrap((document["turns"] as? [[String: Any]])?.first)
+        document["turns"] = [[String: Any]]()
+        document["turnHistory"] = ["kind": "canonical", "history": [
+            "entitiesByKey": ["current": turn], "islands": [["entries": [["value": "current"]]]]]]
+        var stream = CodexDesktopStreamState(thread: DesktopStatusFixtures.thread, owner: DesktopStatusFixtures.owner)
+        _ = try DesktopStatusFixtures.decoded(stream.consume(DesktopStatusFixtures.snapshot(document)))
+        let path: [Any] = ["turnHistory", "history", "entitiesByKey", "current", "items"]
+        let text = "检查 🚀完成"
+        let next = DesktopStatusFixtures.message([
+            "type": "patches", "baseRevision": 1, "revision": 2,
+            "patches": [
+                ["op": "replace", "path": path + [0, "text"], "value": text],
+                ["op": "replace", "path": path + [1, "summary", 0], "value": "PRIVATE_CHANGED"]
+            ],
+            "acceptedTextChanges": [
+                ["type": "text", "key": ["hostId": "local", "threadId": DesktopStatusFixtures.thread,
+                    "entityKey": "current", "itemId": "progress"], "target": ["field": "text"],
+                 "edits": [["at": 2, "deleteCount": 0, "insert": " 🚀完成"]]],
+                ["type": "text", "key": ["hostId": "local", "threadId": DesktopStatusFixtures.thread,
+                    "entityKey": "current", "itemId": "reason"], "target": ["field": "summary", "index": 0],
+                 "edits": [["at": 0, "deleteCount": 0, "insert": "PRIVATE_DELTA"]]]
+            ]
+        ])
+        let snapshot = try DesktopStatusFixtures.decoded(stream.consume(next))
+        XCTAssertEqual(snapshot.context.progressText, text, "Supplementary edits must not duplicate authoritative patch text")
+        XCTAssertTrue(snapshot.capabilities.contains([.messages, .progress, .steer, .queue]))
+        let retained = String(decoding: try JSONSerialization.data(withJSONObject: XCTUnwrap(stream.document)), as: UTF8.self)
+        XCTAssertFalse(retained.contains("PRIVATE"))
+        let completed = try DesktopStatusFixtures.decoded(stream.consume(DesktopStatusFixtures.patches([
+            ["op": "replace", "path": ["turnHistory", "history", "entitiesByKey", "current", "status"], "value": "completed"],
+            ["op": "replace", "path": ["threadRuntimeStatus"], "value": ["type": "idle"]]
+        ], base: 2, revision: 3)))
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertTrue(completed.capabilities.contains(.send))
+        XCTAssertNil(completed.context.progressText)
+    }
+
     @MainActor func testThirtyOneSilentCandidatesDoNotBlockLiveSnapshotOrResetHealthyConnection() async throws {
         let fixture = try DesktopStatusSocket(.silentCandidates); defer { fixture.stop() }
         let channel = CodexDesktopStatusChannel(root: fixture.root); defer { channel.stop() }
@@ -519,8 +594,10 @@ final class CodexDesktopStatusChannelTests: XCTestCase {
         var stream = CodexDesktopStreamState(thread: DesktopStatusFixtures.thread, owner: DesktopStatusFixtures.owner)
         var foreign = DesktopStatusFixtures.snapshot(); foreign["sourceClientId"] = "other-owner"
         if case .ignored = stream.consume(foreign) {} else { XCTFail("Wrong owner must be ignored") }
-        var wrong = DesktopStatusFixtures.snapshot(); wrong["version"] = 12
-        if case .resubscribe = stream.consume(wrong) {} else { XCTFail("Unknown protocol version must revoke") }
+        for version in [11, 12, 14] {
+            var wrong = DesktopStatusFixtures.snapshot(); wrong["version"] = version
+            if case .resubscribe = stream.consume(wrong) {} else { XCTFail("Unverified protocol version must revoke") }
+        }
         let unknown = DesktopStatusFixtures.state(items: [["id": "future", "type": "futureActivity", "output": "PRIVATE_OUTPUT"]])
         let result = try DesktopStatusFixtures.decoded(stream.consume(DesktopStatusFixtures.snapshot(unknown)))
         XCTAssertEqual(result.capabilities, [.lifecycle, .steer, .queue])

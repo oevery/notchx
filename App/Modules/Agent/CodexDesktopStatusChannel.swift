@@ -129,7 +129,7 @@ struct CodexDesktopStreamState {
               message["method"] as? String == "thread-stream-state-changed",
               let params = message["params"] as? [String: Any], params["conversationId"] as? String == thread,
               message["sourceClientId"] as? String == owner else { return .ignored }
-        guard CodexDesktopProjection.integer(message["version"]) == 11, params["hostId"] as? String == "local",
+        guard CodexDesktopProjection.integer(message["version"]) == 13, params["hostId"] as? String == "local",
               let change = params["change"] as? [String: Any],
               let next = CodexDesktopProjection.integer(change["revision"]), next >= 0 else { return reset() }
         if next < revisionFloor { return .ignored }
@@ -151,12 +151,12 @@ struct CodexDesktopStreamState {
         guard let filtered = candidate.projection,
               var snapshot = CodexDesktopProjection.snapshot(filtered, thread: thread, parent: expectedParent, revision: next) else { return reset() }
         snapshot.ownerID = owner
-        if let textChanges = change["acceptedTextChanges"] {
-            guard let array = textChanges as? [Any] else { return reset() }
-            // Supplemental text-buffer deltas are not yet a verified
-            // parser contract; keep their fallback observations enabled.
-            if !array.isEmpty { snapshot.capabilities.subtract([.messages, .progress]) }
-        }
+        // v13 publishes the authoritative structural patches together with
+        // acceptedTextChanges for the owner's transcript cache. The follower
+        // applies patches to conversationState; replaying those text edits here
+        // would append the same text twice. Never retain the supplementary
+        // reasoning/output payload, nor withdraw public progress because of it.
+        if let changes = change["acceptedTextChanges"], !(changes is [[String: Any]]) { return reset() }
         retained = candidate; revision = next; revisionFloor = next
         return .snapshot(snapshot)
     }
