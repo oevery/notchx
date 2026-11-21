@@ -1,9 +1,17 @@
 import SwiftUI
 
 struct ToolsView: View {
+    private enum DurationTrigger { case menu, minutes }
+
     @ObservedObject var manager = ToolsManager.shared
     @EnvironmentObject private var appState: AppState
-    @State private var showsCustomDuration = false
+    @Environment(\.locale) private var locale
+    @Environment(\.basicControlSize) private var controlSize
+    @State private var durationEdit: KeepAwakeDurationDraft?
+    @State private var durationTrigger: DurationTrigger = .menu
+    @State private var menuFocusRequest: UUID?
+    @State private var restoreMinutesFocus = false
+    @FocusState private var minutesTriggerFocused: Bool
 
     var body: some View {
         Group {
@@ -11,9 +19,18 @@ struct ToolsView: View {
             else { toolsContent }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .islandPopoverInteraction(isPresented: $showsCustomDuration, module: .tools)
+        .islandTransientInteraction(isPresented: Binding(get: { durationEdit != nil },
+            set: { if !$0 { discardDurationEdit() } }), module: .tools)
         .onChange(of: manager.cleaningState) { _, state in
-            if state.isBlocking { showsCustomDuration = false }
+            if state.isBlocking { discardDurationEdit() }
+        }
+        .onChange(of: manager.isKeepingAwake) { _, active in if active { discardDurationEdit() } }
+        .onChange(of: appState.keepAwakeCustomMinutes) { _, _ in discardDurationEdit() }
+        .onChange(of: appState.keepAwakeDuration) { _, _ in discardDurationEdit() }
+        .onKeyPress(.escape) {
+            guard durationEdit != nil else { return .ignored }
+            finishDurationEdit(save: false)
+            return .handled
         }
     }
 
@@ -22,54 +39,33 @@ struct ToolsView: View {
             HStack(spacing: 12) {
                 toolIcon("cup.and.saucer.fill", color: .orange)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Keep Awake").font(.headline).accessibilityIdentifier("tools-awake-title")
-                    if manager.isKeepingAwake {
-                        TimelineView(.periodic(from: .now, by: 1)) { _ in
-                            Text(manager.awakeRemainingDescription)
-                                .monospacedDigit().font(.caption).foregroundStyle(.secondary)
-                        }
-                    } else {
-                        HStack(spacing: 8) {
-                            KeepAwakeDurationPicker(selection: Binding(get: { appState.keepAwakeDuration }, set: { selected in
-                                appState.keepAwakeDuration = selected
-                                if selected == .custom { showsCustomDuration = true }
-                            }), holdsIslandPresentation: true)
-                                .fixedSize(horizontal: true, vertical: false)
-                            if appState.keepAwakeDuration == .custom {
-                                Button(L10n.format("%d min", Int(appState.keepAwakeCustomMinutes))) { showsCustomDuration = true }
-                                    .buttonStyle(.borderless).font(.caption)
-                                    .help(L10n.text("Edit Custom Duration"))
-                                    .accessibilityIdentifier("keep-awake-edit-custom")
-                                    .popover(isPresented: $showsCustomDuration, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-                                        customDurationEditor
-                                    }
+                    Text("Keep Awake").font(IslandTypography.heading).foregroundStyle(IslandPalette.primary)
+                        .accessibilityIdentifier("tools-awake-title")
+                    HStack(spacing: 8) {
+                        if manager.isKeepingAwake {
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                                Text(manager.awakeRemainingDescription)
+                                    .font(IslandTypography.time).foregroundStyle(IslandPalette.secondary)
                             }
+                        } else {
+                            durationControls
                         }
+                        Spacer(minLength: 8)
+                        HStack(spacing: 8) { awakeActions }.fixedSize()
                     }
+                    .frame(minHeight: controlSize.islandHeight)
                 }
-                .frame(maxWidth: .infinity, minHeight: 48, alignment: .topLeading)
-                Group {
-                    if manager.isKeepingAwake {
-                        Button(L10n.text("Turn Off")) { manager.stopKeepingAwake() }
-                            .accessibilityIdentifier("keep-awake-stop")
-                    } else {
-                        Button(L10n.text("Turn On")) {
-                            NSApp.keyWindow?.makeFirstResponder(nil)
-                            manager.startKeepingAwake(for: appState.keepAwakeDuration)
-                        }
-                        .accessibilityIdentifier("keep-awake-start")
-                    }
-                }
-                .frame(width: 140, height: 48, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             if let error = manager.awakeError { errorText(error) }
-            Divider()
+            IslandDivider()
             HStack(spacing: 12) {
                 toolIcon("keyboard", color: .cyan)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Keyboard Cleaning").font(.headline).accessibilityIdentifier("tools-cleaning-title")
+                    Text("Keyboard Cleaning").font(IslandTypography.heading).foregroundStyle(IslandPalette.primary)
+                        .accessibilityIdentifier("tools-cleaning-title")
                     Text("Lock the keyboard until you click End Cleaning.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, minHeight: 48, alignment: .topLeading)
                 Group {
@@ -87,7 +83,9 @@ struct ToolsView: View {
                         .accessibilityIdentifier("keyboard-cleaning-permission")
                     }
                 }
-                .frame(width: 140, height: 48, alignment: .trailing)
+                .buttonStyle(IslandButtonStyle(.secondary))
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 48, alignment: .trailing)
             }
             if let error = manager.cleaningError { errorText(error) }
         }
@@ -96,21 +94,106 @@ struct ToolsView: View {
         .accessibilityIdentifier("tools-content")
     }
 
-    private var customDurationEditor: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Custom Duration").font(.headline)
-            SettingNumberField(title: "Custom Duration", value: $appState.keepAwakeCustomMinutes,
-                range: 1...1440, unit: "minutes", step: 1, identifier: "keep-awake-custom-minutes")
-            Text("1–1440 minutes").font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button(L10n.text("Done")) {
-                    NSApp.keyWindow?.makeFirstResponder(nil)
-                    showsCustomDuration = false
+    @ViewBuilder
+    private var durationControls: some View {
+        let options = KeepAwakeDuration.allCases
+        IslandMenuButton(label: L10n.text("Duration"), identifier: "keep-awake-duration", module: .tools,
+            items: options.map { option in
+                IslandMenuItem(title: option.title) { selectDuration(option) }
+            }, selectedIndex: options.firstIndex(of: appState.keepAwakeDuration) ?? 0, focusRequest: menuFocusRequest)
+            .islandInputChrome(insetsContent: false)
+            .fixedSize()
+            .disabled(durationEdit != nil)
+        if durationEdit != nil {
+            customDurationEditor
+        } else if appState.keepAwakeDuration == .custom {
+            Button(L10n.format("%d min", Int(appState.keepAwakeCustomMinutes))) { beginDurationEdit(from: .minutes) }
+                .buttonStyle(IslandButtonStyle(.secondary))
+                .fixedSize()
+                .help(L10n.text("Edit Custom Duration"))
+                .accessibilityIdentifier("keep-awake-edit-custom")
+                .focused($minutesTriggerFocused)
+                .task {
+                    if restoreMinutesFocus {
+                        restoreMinutesFocus = false
+                        minutesTriggerFocused = true
+                    }
                 }
+        }
+    }
+
+    @ViewBuilder
+    private var awakeActions: some View {
+        if manager.isKeepingAwake {
+            Button(L10n.text("Turn Off")) { manager.stopKeepingAwake() }
+                .buttonStyle(IslandButtonStyle(.secondary))
+                .accessibilityIdentifier("keep-awake-stop")
+        } else if durationEdit != nil {
+            Button(L10n.text("Cancel")) { finishDurationEdit(save: false) }
+                .buttonStyle(IslandButtonStyle(.secondary))
+                .accessibilityIdentifier("keep-awake-custom-cancel")
+            Button(L10n.text("Done")) { finishDurationEdit(save: true) }
+                .buttonStyle(IslandButtonStyle(.primary))
                 .accessibilityIdentifier("keep-awake-custom-done")
+        } else {
+            Button(L10n.text("Turn On")) {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+                manager.startKeepingAwake(for: appState.keepAwakeDuration)
             }
-        }.padding(20).frame(width: 260)
+            .buttonStyle(IslandButtonStyle(.primary))
+            .accessibilityIdentifier("keep-awake-start")
+        }
+    }
+
+    private var customDurationEditor: some View {
+        HStack(spacing: 6) {
+            SettingNumericTextField(title: L10n.text("Custom Duration"),
+                text: Binding(get: { durationEdit?.text ?? "" }, set: { durationEdit?.text = $0 }),
+                identifier: "keep-awake-custom-minutes", onCommit: {}, focusOnMount: true,
+                onSubmit: { finishDurationEdit(save: true) }, onCancel: { finishDurationEdit(save: false) },
+                usesIslandChrome: true)
+                .frame(width: 52)
+                .islandInputChrome()
+                .help(L10n.text("1–1440 minutes"))
+                .accessibilityHint(L10n.text("1–1440 minutes"))
+            Text("minutes").font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
+            Stepper(L10n.text("Custom Duration"), value: Binding(
+                get: { durationEdit?.minutes(in: locale) ?? appState.keepAwakeCustomMinutes },
+                set: { durationEdit?.setMinutes($0, locale: locale) }), in: KeepAwakeDuration.customMinutesRange, step: 1)
+                .labelsHidden()
+                .accessibilityIdentifier("keep-awake-custom-stepper")
+        }
+        .fixedSize()
+    }
+
+    private func selectDuration(_ duration: KeepAwakeDuration) {
+        if duration == .custom { beginDurationEdit(from: .menu) }
+        else { appState.keepAwakeDuration = duration }
+    }
+
+    private func beginDurationEdit(from trigger: DurationTrigger) {
+        guard durationEdit == nil, !manager.isKeepingAwake, !manager.cleaningState.isBlocking else { return }
+        durationTrigger = trigger
+        durationEdit = KeepAwakeDurationDraft(minutes: appState.keepAwakeCustomMinutes, locale: locale)
+    }
+
+    private func finishDurationEdit(save: Bool) {
+        guard let durationEdit else { return }
+        if save {
+            durationEdit.confirm(in: appState, locale: locale)
+        }
+        self.durationEdit = nil
+        switch durationTrigger {
+        case .menu: menuFocusRequest = UUID()
+        case .minutes: restoreMinutesFocus = true
+        }
+    }
+
+    private func discardDurationEdit() {
+        if durationEdit != nil {
+            durationEdit = nil
+            restoreMinutesFocus = false
+        }
     }
 
     private func toolIcon(_ symbol: String, color: Color) -> some View {
@@ -122,13 +205,13 @@ struct ToolsView: View {
         VStack(spacing: 12) {
             Image(systemName: "keyboard.badge.ellipsis")
                 .font(.system(size: 28)).foregroundStyle(.cyan)
-            Text("Keyboard Locked").font(.headline)
+            Text("Keyboard Locked").font(.headline).foregroundStyle(IslandPalette.primary)
             Text(manager.cleaningState == .releasing
                  ? L10n.text("Release all keys to finish cleaning.")
                  : L10n.text("Clean your keyboard. Click below when you are done."))
-                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.callout).foregroundStyle(IslandPalette.secondary).multilineTextAlignment(.center)
             Button(L10n.text("End Cleaning")) { manager.endCleaning() }
-                .buttonStyle(.borderedProminent).controlSize(.large)
+                .buttonStyle(IslandButtonStyle(.primary))
                 .disabled(manager.cleaningState == .releasing)
                 .accessibilityIdentifier("keyboard-cleaning-end")
         }
@@ -143,33 +226,28 @@ struct ToolsView: View {
     }
 }
 
-struct KeepAwakeDurationPicker: View {
-    @Binding var selection: KeepAwakeDuration
-    var holdsIslandPresentation = false
-    @EnvironmentObject private var appState: AppState
-    @Environment(\.islandContentActive) private var contentActive
-    @State private var menuInteraction: IslandInteractionToken?
+struct KeepAwakeDurationDraft {
+    let originalMinutes: Double
+    var text: String
 
-    var body: some View {
-        Picker(L10n.text("Duration"), selection: $selection) {
-            ForEach(KeepAwakeDuration.allCases) { option in Text(option.title).tag(option) }
-        }
-        .labelsHidden().pickerStyle(.menu)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(L10n.text("Duration"))
-        .accessibilityIdentifier("keep-awake-duration")
-        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
-            if holdsIslandPresentation, contentActive, menuInteraction == nil {
-                menuInteraction = appState.beginControlInteraction(for: .tools)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in releaseMenu() }
-        .onChange(of: contentActive) { _, active in if !active { releaseMenu() } }
-        .onDisappear { releaseMenu() }
+    init(minutes: Double, locale: Locale) {
+        originalMinutes = minutes
+        text = minutes.formatted(.number.locale(locale))
     }
 
-    private func releaseMenu() {
-        if let token = menuInteraction { menuInteraction = nil; appState.endControlInteraction(token) }
+    func minutes(in locale: Locale) -> Double {
+        KeepAwakeDuration.boundedCustomMinutes(SettingValueBounds.committedValue(from: text,
+            currentValue: originalMinutes, in: KeepAwakeDuration.customMinutesRange, locale: locale))
+    }
+
+    mutating func setMinutes(_ minutes: Double, locale: Locale) {
+        text = KeepAwakeDuration.boundedCustomMinutes(minutes).formatted(.number.locale(locale))
+    }
+
+    @MainActor
+    func confirm(in appState: AppState, locale: Locale) {
+        appState.keepAwakeCustomMinutes = minutes(in: locale)
+        appState.keepAwakeDuration = .custom
     }
 }
 
@@ -179,7 +257,8 @@ struct ToolsExpandedView: View {
         Button { appState.presentFullExpandedModule(.tools) } label: {
             Label(L10n.text("Open Tools"), systemImage: "wrench.and.screwdriver")
         }
-        .buttonStyle(.plain).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .buttonStyle(IslandButtonStyle(.secondary))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

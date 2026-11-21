@@ -43,13 +43,12 @@ struct PendingIslandEventsMenu: View {
     @EnvironmentObject private var appState: AppState
     var body: some View {
         if !appState.pendingIslandEvents.isEmpty {
-            Menu {
-                ForEach(appState.pendingIslandEvents) { event in
-                    Button(event.title) { appState.viewPendingEvent(event) }
-                }
-            } label: { Image(systemName: "bell.badge.fill").foregroundStyle(.orange) }
-            .menuStyle(.borderlessButton).fixedSize()
-            .accessibilityLabel(Text("Pending island events"))
+            IslandMenuButton(label: L10n.text("Pending island events"), symbol: "bell.badge.fill", module: nil,
+                items: appState.pendingIslandEvents.map { event in
+                    IslandMenuItem(title: L10n.text(event.title)) { appState.viewPendingEvent(event) }
+                }, usesSharedBezel: false)
+            .basicControlSize(.small)
+            .fixedSize()
             .help("View reminders without interrupting the current activity")
         }
     }

@@ -10,8 +10,9 @@ enum KeepAwakeDuration: Int, CaseIterable, Identifiable {
     case fifteenMinutes = 900, thirtyMinutes = 1800, sixtyMinutes = 3600
     case twoHours = 7200, custom = -1, forever = 0
     var id: Int { rawValue }
+    static let customMinutesRange: ClosedRange<Double> = 1...1440
     static func boundedCustomMinutes(_ value: Double) -> Double {
-        value.isFinite ? min(1440, max(1, value.rounded())) : 90
+        value.isFinite ? min(customMinutesRange.upperBound, max(customMinutesRange.lowerBound, value.rounded())) : 90
     }
     func seconds(customMinutes: Double) -> TimeInterval? {
         switch self {

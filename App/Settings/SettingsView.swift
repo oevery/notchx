@@ -75,7 +75,6 @@ struct SettingsView: View {
                     HStack {
                         Button(L10n.text("Quit NotchX")) { NSApp.terminate(nil) }
                             .buttonStyle(.bordered)
-                            .controlSize(.regular)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 16)
@@ -101,6 +100,7 @@ struct SettingsView: View {
             .id(selectedPane)
         }
         .frame(minWidth: 800, idealWidth: 960, minHeight: 560, idealHeight: 680)
+        .basicControlSize(.regular)
         .environment(\.islandMotion, appState.motion)
         .notchXLocalized()
     }

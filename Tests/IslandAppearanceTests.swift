@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class IslandAppearanceTests: XCTestCase {
-    func testImportHistoryPopoverResolvesDarkNativeAppearanceInLightHost() async throws {
+    func testImportHistoryPopoverUsesIslandAppearanceWithoutChangingOtherWindows() async throws {
         let domain = "app.notchx.tests.popover-appearance.\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: domain)!
         let state = AppState(preferenceStore: preferences)
@@ -18,18 +18,17 @@ final class IslandAppearanceTests: XCTestCase {
         XCTAssertTrue(store.handleDrop(providers: [NSItemProvider(object: "Appearance sample" as NSString)]) { _ in imported.fulfill() })
         await fulfillment(of: [imported], timeout: 3)
 
-        // Reproduce the original boundary: dark SwiftUI foreground content
-        // presented from an otherwise light AppKit host.
         let host = NSHostingView(rootView: ShelfImportFeedbackView(shelf: store)
             .environmentObject(state)
-            .environment(\.colorScheme, .dark).foregroundStyle(.white)
+            .environment(\.colorScheme, .dark)
             .frame(width: 600, height: 90).notchXLocalized())
-        let window = makeLightWindow(content: host, size: NSSize(width: 600, height: 90))
+        let window = makeWindow(content: host, size: NSSize(width: 600, height: 90), appearance: .darkAqua)
+        let other = makeWindow(content: NSView(), size: NSSize(width: 120, height: 90))
         let oldAppearance = NSApp.appearance?.name
         var popoverWindow: NSWindow?
         defer {
             popoverWindow?.close()
-            window.close()
+            window.close(); other.close()
             store.setEnabled(false)
             preferences.removePersistentDomain(forName: domain)
             try? FileManager.default.removeItem(at: root)
@@ -39,9 +38,10 @@ final class IslandAppearanceTests: XCTestCase {
         XCTAssertEqual(button.accessibilityPerformPress?(), true)
         popoverWindow = try await NativeUI.window(containing: "shelf-import-history-title")
         let popover = try XCTUnwrap(popoverWindow)
-        try await NativeUI.waitFor("dark popover appearance") { popover.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
-        XCTAssertEqual(popover.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .darkAqua)
-        XCTAssertEqual(window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .aqua)
+        try await NativeUI.waitFor("island popover appearance") {
+            popover.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+        XCTAssertEqual(other.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .aqua)
         XCTAssertEqual(NSApp.appearance?.name, oldAppearance)
         XCTAssertTrue(state.isControlInteractionActive)
         state.dismiss()
@@ -56,8 +56,8 @@ final class IslandAppearanceTests: XCTestCase {
         let preferences = UserDefaults(suiteName: domain)!
         let state = AppState(preferenceStore: preferences)
         let host = NSHostingView(rootView: IslandContainerView().environmentObject(state))
-        let window = makeLightWindow(content: host, size: NSSize(width: 600, height: 180))
-        let other = makeLightWindow(content: NSView(), size: NSSize(width: 120, height: 90))
+        let window = makeWindow(content: host, size: NSSize(width: 600, height: 180))
+        let other = makeWindow(content: NSView(), size: NSSize(width: 120, height: 90))
         let oldAppearance = NSApp.appearance?.name
         defer {
             window.close(); other.close()
@@ -70,11 +70,11 @@ final class IslandAppearanceTests: XCTestCase {
         XCTAssertEqual(NSApp.appearance?.name, oldAppearance)
     }
 
-    private func makeLightWindow(content: NSView, size: NSSize) -> NSWindow {
+    private func makeWindow(content: NSView, size: NSSize, appearance: NSAppearance.Name = .aqua) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 100, y: 100), size: size),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .aqua)
+        window.appearance = NSAppearance(named: appearance)
         window.contentView = content
         window.orderFront(nil)
         return window

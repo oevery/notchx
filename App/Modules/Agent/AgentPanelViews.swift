@@ -73,7 +73,12 @@ struct AgentExpandedView: View {
     @ObservedObject private var manager = AgentManager.shared
     var body: some View {
         if let group = manager.currentGroup {
-            HStack { AgentBrandIcon(); Text(verbatim: group.root.title).lineLimit(1); Spacer(); Text(verbatim: group.status.displayName).font(.caption).foregroundStyle(.secondary) }
+            HStack {
+                AgentBrandIcon()
+                Text(verbatim: group.root.title).foregroundStyle(IslandPalette.primary).lineLimit(1)
+                Spacer()
+                IslandStatusLabel(title: Text(verbatim: group.status.displayName), needsAttention: group.status.isWaiting)
+            }
         } else if !manager.idleGroups.isEmpty { Text(L10n.text("No active sessions")) }
         else { AgentUnavailableView(connection: manager.connection, isIntegrationEnabled: manager.isCodexActive) }
     }
@@ -173,13 +178,15 @@ struct AgentFullExpandedView: View {
         HStack(spacing: 8) {
             if manager.panel.route != .sessions {
                 Button { manager.showSessionList() } label: { Label("Back to sessions", systemImage: "chevron.left") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).font(.caption)
-            } else if manager.activeGroups.count > 1 { Text(L10n.format("%d sessions", manager.activeGroups.count)).font(.caption).foregroundStyle(.secondary) }
+                    .buttonStyle(IslandButtonStyle(.secondary))
+            } else if manager.activeGroups.count > 1 { Text(L10n.format("%d sessions", manager.activeGroups.count)).font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary) }
             Spacer()
             if !manager.interaction.approvals.isEmpty, !showingApproval {
                 Button { if let first = manager.interaction.approvals.first { manager.showApproval(first.id) } } label: {
                     Text(L10n.format("%d need attention", manager.interaction.approvals.count))
-                }.buttonStyle(.plain).font(.caption).foregroundStyle(.orange)
+                        .font(IslandTypography.secondary)
+                        .foregroundStyle(IslandPalette.attention)
+                }.buttonStyle(IslandButtonStyle())
             }
         }
     }
@@ -188,13 +195,14 @@ struct AgentFullExpandedView: View {
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 4) {
             sessionRows(manager.defaultGroups)
-            if manager.defaultGroups.isEmpty { Text(L10n.text("No active sessions")).font(.callout).foregroundStyle(.secondary) }
+            if manager.defaultGroups.isEmpty { Text(L10n.text("No active sessions")).font(.callout).foregroundStyle(IslandPalette.secondary) }
             if !manager.idleGroups.isEmpty {
-                IslandDisclosureButton(expanded: showsIdleSessions, action: { showsIdleSessions.toggle() }) {
+                DisclosureTrigger(expanded: showsIdleSessions, action: { showsIdleSessions.toggle() }) {
                     Text(L10n.text("Idle sessions"))
+                        .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
                 }
-                    .font(.callout).foregroundStyle(.secondary)
-                    .padding(.vertical, 5)
+                .buttonStyle(IslandButtonStyle())
+                .padding(.vertical, 5)
                 .accessibilityIdentifier("agent-toggle-idle")
                 if showsIdleSessions {
                     sessionRows(manager.idleGroups)
@@ -214,18 +222,17 @@ struct AgentFullExpandedView: View {
                     HStack(spacing: 10) {
                         AgentBrandIcon(provider: group.id.providerID, size: 24)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(verbatim: group.root.title).font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                            Text(verbatim: group.root.title).font(.body.weight(.semibold)).foregroundStyle(IslandPalette.primary).lineLimit(1)
                             AgentMetadataLine(group: group, context: manager.interaction.contexts[group.id], compact: true)
                             AgentSessionActivity(group: group, context: manager.interaction.contexts[group.id], tool: manager.interaction.tools[group.id])
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                        Text(verbatim: group.status.displayName).font(.caption).foregroundStyle(group.status.isWaiting ? .orange : .secondary)
-                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                        IslandStatusLabel(title: Text(verbatim: group.status.displayName), needsAttention: group.status.isWaiting)
+                        Image(systemName: "chevron.right").font(IslandTypography.metadata).foregroundStyle(IslandPalette.tertiary)
                     }
                     .padding(10).contentShape(Rectangle())
-                    .background(manager.selectedSessionID == group.id ? Color.white.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 10))
                 }
-                .buttonStyle(.plain).focused($focusedRow, equals: group.id)
+                .buttonStyle(IslandButtonStyle(.row, selected: manager.selectedSessionID == group.id)).focused($focusedRow, equals: group.id)
                 .accessibilityIdentifier("agent-select-" + group.id.sessionID)
             }
     }
@@ -235,25 +242,26 @@ struct AgentFullExpandedView: View {
         let context = manager.interaction.contexts[group.id]
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text(verbatim: group.root.title).font(.title3.weight(.semibold)).lineLimit(1)
+                Text(verbatim: group.root.title).font(.title3.weight(.semibold)).foregroundStyle(IslandPalette.primary).lineLimit(1)
                 Spacer(minLength: 8)
-                Label(group.status.displayName, systemImage: group.status.icon).font(.caption).foregroundStyle(.secondary)
+                IslandStatusLabel(title: Text(verbatim: group.status.displayName), icon: group.status.icon, needsAttention: group.status.isWaiting)
                     .padding(.horizontal, 7).padding(.vertical, 3).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
             }
             AgentMetadataLine(group: group, context: context)
             if context?.cwd == nil && context?.model == nil {
                 Text("Session details are incomplete. Check the hook helper in Agent settings.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if let prompt = AgentPanelPresentation.userMessage(context: context, turnID: group.root.runID) {
                 HStack(alignment: .firstTextBaseline, spacing: 9) {
-                    Text("You").foregroundStyle(.secondary).fontWeight(.medium)
+                    Text("You").foregroundStyle(IslandPalette.secondary).fontWeight(.medium)
                     Text(verbatim: prompt).lineLimit(1).truncationMode(.tail)
-                }.font(.callout).foregroundStyle(.secondary)
+                }.font(.callout).foregroundStyle(IslandPalette.secondary)
                     .accessibilityIdentifier("agent-user-message-" + group.id.sessionID)
             }
             AgentSessionActivity(group: group, context: context, tool: manager.interaction.tools[group.id])
                     .font(.callout)
+                    .foregroundStyle(IslandPalette.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("agent-current-activity-" + group.id.sessionID)
             if let input = context?.pendingInput {
@@ -262,7 +270,7 @@ struct AgentFullExpandedView: View {
                     Text(verbatim: input.text).font(.callout).lineLimit(2)
                     Button { manager.openSession(group.id) { appState.openExternalURL($0, for: .agent) } } label: {
                         Label(L10n.text("Answer in Codex"), systemImage: "arrow.up.right")
-                    }.buttonStyle(.plain).font(.callout).disabled(!manager.canOpenSession(group.id))
+                    }.buttonStyle(IslandButtonStyle()).font(.callout).disabled(!manager.canOpenSession(group.id))
                         .accessibilityIdentifier("agent-answer-in-codex-" + group.id.sessionID)
                 }
                 .accessibilityElement(children: .contain)
@@ -272,7 +280,7 @@ struct AgentFullExpandedView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                         Label(step.step, systemImage: step.status == "completed" ? "checkmark.circle" : "circle")
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }.accessibilityIdentifier("agent-plan-" + group.id.sessionID)
                     .transition(.opacity.animation(motion.content))
@@ -287,7 +295,7 @@ struct AgentFullExpandedView: View {
                                 Text(verbatim: L10n.format("Last known: %@", known.displayName))
                             } else { Text(verbatim: child.status.displayName) }
                         }
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
                     }
                 }.accessibilityIdentifier("agent-children-" + group.id.sessionID)
                     .transition(.opacity.animation(motion.content))
@@ -299,28 +307,28 @@ struct AgentFullExpandedView: View {
     private func footer(_ group: AgentSessionGroup) -> some View {
         VStack(spacing: 10) {
             AgentMessageComposer(manager: manager, sessionID: group.id).id(group.id)
-            Divider()
+            IslandDivider()
             HStack(spacing: 10) {
-                Text(group.root.updatedAt, style: .time).foregroundStyle(.secondary).monospacedDigit()
+                Text(group.root.updatedAt, style: .time).foregroundStyle(IslandPalette.secondary).monospacedDigit()
                     .accessibilityIdentifier("agent-time-" + group.id.sessionID)
                 if let steps = manager.interaction.contexts[group.id]?.plan, !steps.isEmpty {
-                    IslandDisclosureButton(expanded: expandedPlan == group.id, action: { expandedPlan = expandedPlan == group.id ? nil : group.id }) {
+                    DisclosureTrigger(expanded: expandedPlan == group.id, action: { expandedPlan = expandedPlan == group.id ? nil : group.id }) {
                         Text(verbatim: L10n.format("Task list %d/%d", steps.filter { $0.status == "completed" }.count, steps.count))
-                    }.accessibilityIdentifier("agent-toggle-plan-" + group.id.sessionID)
+                    }.buttonStyle(IslandButtonStyle()).accessibilityIdentifier("agent-toggle-plan-" + group.id.sessionID)
                 }
                 if !group.children.isEmpty {
-                    IslandDisclosureButton(expanded: expandedChildren == group.id, action: { expandedChildren = expandedChildren == group.id ? nil : group.id }) {
+                    DisclosureTrigger(expanded: expandedChildren == group.id, action: { expandedChildren = expandedChildren == group.id ? nil : group.id }) {
                         Text(verbatim: L10n.format("%d subagents", group.children.count))
-                    }.accessibilityIdentifier("agent-toggle-children-" + group.id.sessionID)
+                    }.buttonStyle(IslandButtonStyle()).accessibilityIdentifier("agent-toggle-children-" + group.id.sessionID)
                 }
                 Spacer(minLength: 8)
                 Button { manager.openSession(group.id) { appState.openExternalURL($0, for: .agent) } } label: {
-                    Label("Open session", systemImage: "arrow.up.right").font(.caption)
+                    Label("Open session", systemImage: "arrow.up.right").font(IslandTypography.secondary)
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary).disabled(!manager.canOpenSession(group.id))
+                .buttonStyle(IslandButtonStyle()).foregroundStyle(IslandPalette.secondary).disabled(!manager.canOpenSession(group.id))
                 .accessibilityIdentifier("agent-open-" + group.id.sessionID)
             }
-            .font(.caption).lineLimit(1).buttonStyle(.plain).foregroundStyle(.secondary)
+            .font(IslandTypography.secondary).lineLimit(1).buttonStyle(IslandButtonStyle()).foregroundStyle(IslandPalette.secondary)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-footer-" + group.id.sessionID)
@@ -348,15 +356,14 @@ struct AgentMessageComposer: View {
                     get: { manager.draft(for: sessionID).text },
                     set: { manager.setMessageDraft($0, for: sessionID) }), axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(1...3).focused($isFocused)
-                    .frame(minHeight: 28)
                     .onSubmit { submit(mode) }
                     .background(IslandTextInputFocusBoundary(isFocused: focusBinding))
+                    .islandInputChrome()
                     .accessibilityIdentifier("agent-message-input")
                 HStack(alignment: .center, spacing: 10) {
                     if mode == .steer {
                         Button("Queue") { submit(.queue) }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
-                            .frame(height: 28)
+                            .buttonStyle(IslandButtonStyle(.secondary))
                             .disabled(!manager.canSendMessage(to: sessionID, mode: .queue))
                             .help(L10n.text("Send after this turn ends"))
                             .accessibilityIdentifier("agent-message-queue")
@@ -368,12 +375,13 @@ struct AgentMessageComposer: View {
                             if draft.delivery == .sending { ProgressView().controlSize(.small) }
                         }.frame(minWidth: 34)
                     }
-                    .buttonStyle(.bordered).controlSize(.regular).frame(height: 28)
+                    .buttonStyle(IslandButtonStyle(.primary))
                     .disabled(!manager.canSendMessage(to: sessionID, mode: mode))
                     .accessibilityLabel(L10n.text(mode == .send ? "Send" : "Steer"))
                     .accessibilityIdentifier("agent-message-primary")
                 }
             }
+            .basicControlSize(.small)
             .padding(10).background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
             Group {
                 switch draft.delivery {
@@ -383,14 +391,14 @@ struct AgentMessageComposer: View {
                 case .uncertain:
                     Text("Delivery unconfirmed. Check the original session before sending again.")
                     Button("I checked the original session") { manager.acknowledgeUncertainMessage(for: sessionID) }
-                        .buttonStyle(.plain).accessibilityIdentifier("agent-message-acknowledge")
+                        .buttonStyle(IslandButtonStyle()).accessibilityIdentifier("agent-message-acknowledge")
                 case .ready:
                     if draft.text.utf8.count > 32_000 { Text("Message is too long. Limit: 32 KB.") }
                     else if manager.interaction.primaryCapabilities[sessionID]?.contains(mode.capability) != true {
                         Text("Message delivery unavailable. Open the original session to continue.")
                     }
                 }
-            }.font(.caption).foregroundStyle(.secondary)
+            }.font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
         }
         .onChange(of: isFocused) { _, focused in
             if focused && contentActive {
@@ -465,7 +473,7 @@ private struct AgentMetadataLine: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) { fields }
             VStack(alignment: .leading, spacing: 3) { fields }
-        }.font(.callout).foregroundStyle(.secondary)
+        }.font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
     }
     @ViewBuilder private var fields: some View {
         Text("Codex")
@@ -487,22 +495,24 @@ private struct AgentApprovalPanel: View {
                 HStack { AgentBrandIcon(size: 18); Text(verbatim: group.root.title).font(.subheadline.weight(.medium)).lineLimit(1) }
                 AgentMetadataLine(group: group, context: manager.interaction.contexts[request.sessionID], compact: true)
             }
-            HStack { Label("Approval requested", systemImage: "checkmark.shield").foregroundStyle(.orange); Spacer(); Text(L10n.format("%d pending", manager.interaction.approvals.count)).foregroundStyle(.secondary) }.font(.caption)
+            HStack { Label("Approval requested", systemImage: "checkmark.shield").foregroundStyle(.orange); Spacer(); Text(L10n.format("%d pending", manager.interaction.approvals.count)).foregroundStyle(IslandPalette.secondary) }.font(IslandTypography.secondary)
             Text(verbatim: request.command).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(9).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-            if let reason = request.reason { Text(verbatim: reason).font(.caption).foregroundStyle(.secondary) }
+            if let reason = request.reason { Text(verbatim: reason).font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary) }
             if request.delivery == .uncertain {
-                Text("Decision delivery unconfirmed. Check Codex before deciding again.").font(.caption).foregroundStyle(.secondary)
+                Text("Decision delivery unconfirmed. Check Codex before deciding again.").font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
             }
             HStack {
-                Button("Handle in Codex") { manager.respondToApproval(request.id, decision: .deferToApp); manager.openSession(request.sessionID) { appState.openExternalURL($0, for: .agent) } }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Button("Handle in Codex") { manager.respondToApproval(request.id, decision: .deferToApp); manager.openSession(request.sessionID) { appState.openExternalURL($0, for: .agent) } }
                 Spacer()
                 Button(request.denyEndsTurn ? L10n.text("Cancel turn") : L10n.text("Deny")) { manager.respondToApproval(request.id, decision: .deny) }
                     .disabled(!request.canDeny || request.isSubmitting || request.expiresAt <= Date())
-                Button("Allow once") { manager.respondToApproval(request.id, decision: .allow) }.buttonStyle(.borderedProminent)
+                Button("Allow once") { manager.respondToApproval(request.id, decision: .allow) }.buttonStyle(IslandButtonStyle(.primary))
                     .disabled(!request.canAllow || request.isSubmitting || request.expiresAt <= Date())
                     .accessibilityIdentifier("agent-allow-" + request.id)
-            }.font(.caption)
+            }
+            .buttonStyle(IslandButtonStyle(.secondary))
+            .basicControlSize(.small)
         }
     }
 }

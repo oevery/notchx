@@ -46,7 +46,6 @@ struct ExpandedView: View {
                     ModuleSummaryItem(icon: "calendar", label: Text("Calendar"))
                     ModuleSummaryItem(icon: "tray.full.fill", label: Text("Shelf"))
                 }
-                .foregroundColor(.white)
                 .padding(.horizontal, 8)
             }
         }
@@ -68,6 +67,6 @@ struct ModuleSummaryItem: View {
             label
                 .font(.system(size: 9, weight: .medium))
         }
-        .foregroundColor(.white.opacity(0.7))
+        .foregroundStyle(IslandPalette.secondary)
     }
 }

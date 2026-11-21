@@ -19,15 +19,18 @@ struct WeatherExpandedView: View {
                     if manager.isLoading { ProgressView().controlSize(.small) }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(manager.isLoading ? L10n.text("Fetching weather") : L10n.text("Weather unavailable"))
+                            .foregroundStyle(IslandPalette.primary)
                         Text(manager.errorMessage ?? L10n.text("Allow location access to fetch local weather."))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
                     }
                     Spacer()
                     Button(L10n.text("Retry")) { manager.requestLocationAndFetch() }
+                        .buttonStyle(IslandButtonStyle(.secondary))
                         .disabled(manager.isLoading)
                 }
             }
         }
+        .basicControlSize(.small)
     }
 
     private var forecast: some View {
@@ -37,14 +40,16 @@ struct WeatherExpandedView: View {
                 Spacer()
                 if (presentationState ?? appState.currentState) == .fullExpanded {
                     Button(L10n.text("Refresh")) { manager.requestLocationAndFetch() }
+                        .buttonStyle(IslandButtonStyle(.secondary))
                         .disabled(manager.isLoading).accessibilityIdentifier("weather-refresh")
                 }
             }
             if let error = manager.errorMessage {
                 HStack {
-                    Text(error).font(.caption).foregroundStyle(.secondary)
+                    Text(error).font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
                     Spacer()
                     Button(L10n.text("Retry")) { manager.requestLocationAndFetch() }
+                        .buttonStyle(IslandButtonStyle(.secondary))
                         .disabled(manager.isLoading)
                 }
             }
@@ -52,16 +57,16 @@ struct WeatherExpandedView: View {
             HStack(spacing: 12) {
                 Image(systemName: manager.weather.conditionIcon)
                     .font(.system(size: 28))
-                    .foregroundColor(.white)
+                    .symbolRenderingMode(.multicolor)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(temp(manager.weather.temperature))
                         .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundStyle(IslandPalette.primary)
 
                     Text(manager.weather.condition)
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
 
                 Spacer()
@@ -69,22 +74,22 @@ struct WeatherExpandedView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("H:\(temp(manager.weather.temperatureHigh))")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundStyle(IslandPalette.secondary)
                     Text("L:\(temp(manager.weather.temperatureLow))")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
             }
 
             // Location
             if !manager.weather.locationName.isEmpty {
                 Text(manager.weather.locationName)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.4))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.tertiary)
             }
 
             if (presentationState ?? appState.currentState) == .fullExpanded {
-                Divider().background(.white.opacity(0.2))
+                IslandDivider()
 
                 // Hourly forecast + details side by side
                 HStack(alignment: .top, spacing: 0) {
@@ -95,16 +100,16 @@ struct WeatherExpandedView: View {
                                 ForEach(manager.weather.hourlyForecast) { hour in
                                     VStack(spacing: 4) {
                                         Text(hour.hour)
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.white.opacity(0.6))
+                                            .font(IslandTypography.metadata)
+                                            .foregroundStyle(IslandPalette.secondary)
 
                                         Image(systemName: hour.conditionIcon)
                                             .font(.system(size: 14))
-                                            .foregroundColor(.white)
+                                            .symbolRenderingMode(.multicolor)
 
                                         Text(temp(hour.temperature))
                                             .font(.system(size: 11, weight: .medium))
-                                            .foregroundColor(.white)
+                                            .foregroundStyle(IslandPalette.label)
                                     }
                                 }
                             }
@@ -140,16 +145,16 @@ struct WeatherExpandedView: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundStyle(IslandPalette.tertiary)
                 .frame(width: 16, alignment: .center)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(L10n.text(title))
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.tertiary)
                 Text(value)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundStyle(IslandPalette.label)
             }
         }
     }

@@ -164,7 +164,7 @@ struct FullExpandedTopBarView: View {
                     .padding(.bottom, 10)
                 }
                 .onChange(of: selectedTab) { _, newTab in
-                    withAnimation(appState.motion.content) {
+                    withAnimation(appState.motion.reduced ? nil : appState.motion.content) {
                         proxy.scrollTo(newTab.id, anchor: .leading)
                     }
                 }
@@ -255,22 +255,10 @@ struct FullExpandedTopBarView: View {
         } label: {
             Image(systemName: "gearshape.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(IslandPalette.icon)
                 .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(islandSurfaceFill)
-                        .overlay(
-                            Circle()
-                                .fill(Color.white.opacity(0.01))
-                        )
-                )
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.035), lineWidth: 1)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle(.icon))
         .accessibilityLabel(Text("Settings"))
         .accessibilityIdentifier("island-settings")
         .hoverPointer()
@@ -287,20 +275,10 @@ struct FullExpandedTopBarView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(batteryButtonTint(isSelected: isSelected))
                 .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(islandSurfaceFill)
-                        .overlay(
-                            Circle()
-                                .fill(Color.white.opacity(isSelected ? 0.04 : 0.01))
-                        )
-                )
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isSelected ? 0.09 : 0.035), lineWidth: 1)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle(.icon, selected: isSelected))
+        .accessibilityLabel(Text("Battery"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .hoverPointer()
         .help("Battery")
     }
@@ -313,22 +291,11 @@ struct FullExpandedTopBarView: View {
         } label: {
             Image(systemName: isLocked ? "lock.fill" : "lock.open")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(isLocked ? 0.92 : 0.72))
+                .foregroundStyle(isLocked ? IslandPalette.primary : IslandPalette.icon)
                 .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(islandSurfaceFill)
-                        .overlay(
-                            Circle()
-                                .fill(Color.white.opacity(isLocked ? 0.05 : 0.01))
-                        )
-                )
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isLocked ? 0.11 : 0.035), lineWidth: 1)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle(.icon, selected: isLocked))
+        .accessibilityLabel(isLocked ? L10n.text("Unlock island") : L10n.text("Lock island open"))
         .hoverPointer()
         .help(isLocked ? L10n.text("Unlock island") : L10n.text("Lock island open"))
     }
@@ -355,20 +322,8 @@ struct FullExpandedTopBarView: View {
         } label: {
             Image(systemName: "bell.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(isSelected ? 0.88 : 0.74))
+                .foregroundStyle(isSelected ? IslandPalette.primary : IslandPalette.icon)
                 .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(islandSurfaceFill)
-                        .overlay(
-                            Circle()
-                                .fill(Color.white.opacity(isSelected ? 0.04 : 0.01))
-                        )
-                )
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isSelected ? 0.09 : 0.035), lineWidth: 1)
-                )
                 .overlay(alignment: .topTrailing) {
                     if notificationManager.recentNotifications.isEmpty {
                         EmptyView()
@@ -377,24 +332,26 @@ struct FullExpandedTopBarView: View {
                     }
                 }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle(.icon, selected: isSelected))
+        .accessibilityLabel(Text("Notifications"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .hoverPointer()
         .help("Notifications")
     }
 
     private var notificationCountBadge: some View {
         Text(notificationCountText)
-            .font(.system(size: 7, weight: .bold, design: .rounded))
+            .font(.system(size: 10, weight: .medium, design: .rounded))
             .foregroundStyle(.white)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Color.green.opacity(0.82))
+                    .fill(Color(white: 0.24))
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .stroke(Color.green.opacity(0.28), lineWidth: 1)
+                    .stroke(IslandPalette.separator, lineWidth: 1)
             )
             .offset(x: 3, y: -2)
     }
@@ -438,17 +395,6 @@ struct FullExpandedTopBarView: View {
         return max(0, leadingShoulderWidth - iconTabWidth - shoulderTabSpacing - pendingWidth)
     }
 
-    private var islandSurfaceFill: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.black.opacity(0.98),
-                Color.black.opacity(0.94)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
     private var notificationCountText: String {
         let count = notificationManager.recentNotifications.count
         if count > 99 {
@@ -463,26 +409,22 @@ struct FullExpandedTopBarView: View {
         guard moduleTabs.contains(targetTab) else { return }
         let target = targetTab.id
 
-        if animated {
-            withAnimation(appState.motion.content) {
-                proxy.scrollTo(target, anchor: .leading)
-            }
-        } else {
+        withAnimation(animated && !appState.motion.reduced ? appState.motion.content : nil) {
             proxy.scrollTo(target, anchor: .leading)
         }
     }
 
-    private func batteryButtonTint(isSelected: Bool) -> Color {
+    private func batteryButtonTint(isSelected: Bool) -> AnyShapeStyle {
         if batteryManager.isCharging {
-            return Color.green.opacity(isSelected ? 0.96 : 0.84)
+            return AnyShapeStyle(Color.green.opacity(isSelected ? 0.96 : 0.84))
         }
         if batteryManager.batteryLevel <= 10 {
-            return Color.red.opacity(isSelected ? 0.96 : 0.82)
+            return AnyShapeStyle(Color.red.opacity(isSelected ? 0.96 : 0.82))
         }
         if batteryManager.batteryLevel <= 20 {
-            return Color.yellow.opacity(isSelected ? 0.96 : 0.82)
+            return AnyShapeStyle(Color.yellow.opacity(isSelected ? 0.96 : 0.82))
         }
-        return Color.white.opacity(isSelected ? 0.9 : 0.74)
+        return AnyShapeStyle(isSelected ? IslandPalette.primary : IslandPalette.icon)
     }
 }
 
@@ -496,7 +438,7 @@ private struct FullExpandedTabButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 tabIcon
-                    .foregroundColor(.white.opacity(isSelected ? 0.96 : 0.72))
+                    .foregroundStyle(isSelected ? IslandPalette.primary : IslandPalette.icon)
 
                 if showsTitle && isSelected {
                     Text(L10n.text(tab.title))
@@ -506,29 +448,10 @@ private struct FullExpandedTabButton: View {
             }
             .padding(.horizontal, showsTitle && isSelected ? 11 : 10)
             .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.black.opacity(0.98),
-                                Color.black.opacity(0.94)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .fill(Color.white.opacity(isSelected ? 0.05 : 0.02))
-                    )
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(isSelected ? 0.12 : 0.08), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle(.navigation, selected: isSelected))
+        .accessibilityLabel(L10n.text(tab.title))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .hoverPointer()
         .help(L10n.text(tab.title))
     }

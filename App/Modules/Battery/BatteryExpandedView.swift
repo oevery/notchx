@@ -41,7 +41,7 @@ struct BatteryExpandedView: View {
 
                     Text(L10n.text(manager.powerSource))
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
 
                 batteryBar
@@ -49,7 +49,7 @@ struct BatteryExpandedView: View {
                 if !manager.timeRemaining.isEmpty {
                     Text(manager.timeRemaining)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
             }
         }
@@ -66,7 +66,7 @@ struct BatteryExpandedView: View {
 
                     if manager.isCharging {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 10))
+                            .font(IslandTypography.metadata)
                             .foregroundColor(.yellow)
                     }
                 }
@@ -79,12 +79,12 @@ struct BatteryExpandedView: View {
 
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(L10n.text(manager.powerSource))
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.62))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.secondary)
                     if !manager.timeRemaining.isEmpty {
                         Text(manager.timeRemaining)
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.58))
+                            .font(IslandTypography.metadata)
+                            .foregroundStyle(IslandPalette.secondary)
                             .lineLimit(1)
                     }
                 }
@@ -98,8 +98,8 @@ struct BatteryExpandedView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Battery Trend")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.82))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.label)
 
                 BatteryHistorySparkline(samples: manager.batteryHistory)
                     .frame(height: 52)
@@ -159,8 +159,8 @@ private struct BatteryHistorySparkline: View {
                         .position(lastPoint(in: proxy.size))
                 } else {
                     Text("Need more samples")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.tertiary)
                 }
             }
         }

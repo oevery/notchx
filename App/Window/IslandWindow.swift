@@ -13,6 +13,24 @@ final class IslandPanel: NSPanel {
         return super.performKeyEquivalent(with: event)
     }
 
+    override func sendEvent(_ event: NSEvent) {
+        let opensContextMenu = event.type == .rightMouseDown
+            || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+        guard opensContextMenu else {
+            super.sendEvent(event)
+            return
+        }
+        let name = IslandNativeAppearance.name(increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+        let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
+            object: nil, queue: nil) { notification in
+                MainActor.assumeIsolated {
+                    (notification.object as? NSMenu)?.appearance = NSAppearance(named: name)
+                }
+            }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        super.sendEvent(event)
+    }
+
     init() {
         let initialCompactSize = ScreenDetector.primaryScreen
             .flatMap(ScreenDetector.compactIslandMetrics(screen:))?
@@ -30,6 +48,7 @@ final class IslandPanel: NSPanel {
         )
 
         level = .statusBar
+        appearance = NSAppearance(named: .darkAqua)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         isOpaque = false
         backgroundColor = .clear

@@ -69,8 +69,8 @@ struct TeleprompterToolbar: View {
             .dataAnnotationID("teleprompter-more-control")
         }
         .font(.callout)
-        .controlSize(.small)
-        .buttonStyle(.bordered)
+        .basicControlSize(.small)
+        .buttonStyle(IslandButtonStyle(.secondary))
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -83,25 +83,21 @@ struct TeleprompterToolbar: View {
                 .accessibilityIdentifier("teleprompter-progress")
             Text(manager.speedDescription).fixedSize()
             Spacer(minLength: 8)
-            Menu {
-                ForEach(manager.paragraphs) { paragraph in
-                    Button(paragraph.title) { manager.jumpToParagraph(paragraph.id) }
-                }
-            } label: {
-                if showsParagraphTitle {
-                    Label(L10n.text("Go to paragraph"), systemImage: "list.bullet")
-                } else {
-                    Image(systemName: "list.bullet").frame(width: 24, height: 20)
-                }
-            }
+            let paragraphTitle = L10n.text("Go to paragraph")
+            IslandMenuButton(label: paragraphTitle, title: showsParagraphTitle ? paragraphTitle : "",
+                symbol: "list.bullet", module: .teleprompter,
+                items: manager.paragraphs.map { paragraph in
+                    IslandMenuItem(title: paragraph.title) { manager.jumpToParagraph(paragraph.id) }
+                })
+            .islandInputChrome(insetsContent: false)
             .id(showsParagraphTitle)
             .fixedSize()
             .disabled(manager.paragraphs.isEmpty || manager.pendingResumePosition != nil)
             .help("Go to paragraph")
-            .accessibilityLabel(L10n.text("Go to paragraph"))
             .dataAnnotationID("teleprompter-paragraph-control")
         }
         .font(.caption)
+        .basicControlSize(.small)
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
@@ -123,9 +119,9 @@ struct TeleprompterReadingOptionsButton<LabelContent: View>: View {
         } label: { label() }
         .popover(isPresented: $showsOptions) {
             TeleprompterReadingOptions(manager: manager) { showsOptions = false }
-                .preferredColorScheme(.dark)
+                .modifier(IslandNativePopoverSurface())
         }
-        .islandPopoverInteraction(isPresented: $showsOptions, module: .teleprompter)
+        .islandTransientInteraction(isPresented: $showsOptions, module: .teleprompter)
     }
 }
 
@@ -188,9 +184,7 @@ struct TeleprompterReadingOptions: View {
             }
         }
         .font(.callout)
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .foregroundStyle(.primary)
+        .basicControlSize(.small)
         .padding(16)
         .frame(width: 312)
     }

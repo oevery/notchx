@@ -492,7 +492,12 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Animations
+    // MARK: - Island Appearance
+
+    func islandAppearance(reduceTransparency: Bool, increasedContrast: Bool) -> IslandAppearance {
+        IslandAppearance(compact: currentState == .compact,
+                         reduceTransparency: reduceTransparency, increasedContrast: increasedContrast)
+    }
 
     var motion: IslandMotion {
         IslandMotion(speed: animationSpeed, reduced: shouldReduceMotion,

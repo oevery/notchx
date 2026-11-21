@@ -81,20 +81,20 @@ final class CompactSlotLayoutTests: XCTestCase {
         let host = NSHostingView(rootView: AnyView(EmptyView()))
         let window = makeWindow(host: host, height: 32)
         defer { window.contentView = nil; window.close() }
-        for (index, state) in [(false, false), (true, false), (true, true), (false, true), (true, false)].enumerated() {
+        for (index, action) in [CompactPlaybackAction.play, .pause, .play, .pause].enumerated() {
             host.rootView = AnyView(CompactSideSlots(centerGapWidth: 179,
                 leading: AnyView(CompactSlot(kind: .artwork) { size in
                     CompactContentProbe(name: "cover").frame(width: size, height: size)
                 }), trailing: AnyView(Button {} label: {
                     CompactSlot(kind: .indicator) { _ in
-                        CompactPlaybackIndicator(isPlaying: state.0, isHovering: state.1, animatesSpectrum: false)
+                        CompactPlaybackIndicator(action: action, animatesSpectrum: false)
                             .background(CompactContentProbe(name: "indicator", visible: false))
                     }
                 }.buttonStyle(.plain).accessibilityIdentifier("playback-button")))
                 .padding(.horizontal, 6).background(Color.black))
             _ = try await NativeUI.waitForElement(in: host, id: "playback-button")
             try await NativeUI.waitFor("playback state replacement", in: host) {
-                NativeUI.nativeViews(in: host).contains { $0 is CompactAudioSpectrumView } == (state.0 && !state.1)
+                NativeUI.nativeViews(in: host).contains { $0 is CompactAudioSpectrumView } == (action == .pause)
             }
             let button = try NativeUI.frame(in: host, id: "playback-button")
             let indicatorView = try XCTUnwrap(NativeUI.nativeViews(in: host).first { $0.identifier?.rawValue == "indicator" })
@@ -107,7 +107,8 @@ final class CompactSlotLayoutTests: XCTestCase {
             XCTAssertEqual(indicator.midY, button.midY - window.frame.minY, accuracy: 0.5)
             if let spectrum = NativeUI.nativeViews(in: host).first(where: { $0 is CompactAudioSpectrumView }) {
                 let frame = spectrum.convert(spectrum.bounds, to: host)
-                XCTAssertEqual(frame.midX, 251, accuracy: 0.5)
+                XCTAssertEqual(frame.width, 16, accuracy: 0.5)
+                XCTAssertEqual(frame.midX, 256, accuracy: 0.5)
                 XCTAssertEqual(frame.midY, 16, accuracy: 0.5)
             }
             try capture(host, name: "playback-" + String(index))

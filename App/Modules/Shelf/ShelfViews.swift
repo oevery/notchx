@@ -59,14 +59,14 @@ struct ShelfExpandedView: View {
 
                 Text(shelf.isEmpty ? L10n.text("Drop files, links, images, or text") : L10n.format("%d saved", shelf.visibleItems.count))
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.58))
+                    .foregroundStyle(IslandPalette.secondary)
             }
 
             if shelf.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "tray.and.arrow.down.fill")
                         .font(.system(size: 18))
-                        .foregroundStyle(.white.opacity(0.78))
+                        .foregroundStyle(IslandPalette.secondary)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Drop onto the island")
@@ -74,7 +74,7 @@ struct ShelfExpandedView: View {
                             .foregroundStyle(.white)
                         Text("Items stay here until you remove them.")
                             .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.56))
+                            .foregroundStyle(IslandPalette.secondary)
                     }
                 }
             } else {
@@ -243,14 +243,14 @@ private struct AirDropDropPane: View {
                     .font(.system(size: 12, weight: .semibold))
 
                 Text("Drop to share")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.secondary)
             }
             .frame(maxWidth: .infinity)
             .frame(maxHeight: .infinity)
             .modifier(ShelfDropTargetStyle(isTargeted: isTargeted))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle())
         .accessibilityIdentifier("shelf-airdrop")
         .help("Share via AirDrop")
         .contentShape(RoundedRectangle(cornerRadius: 16))
@@ -282,11 +282,11 @@ private struct TrayDropPane: View {
                 VStack(spacing: 12) {
                     Image(systemName: "tray.and.arrow.down")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.82))
+                        .foregroundStyle(IslandPalette.label)
 
                     Text("Drop files here")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.78))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -302,11 +302,11 @@ private struct TrayDropPane: View {
                         } else {
                             Text("Shelf")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.72))
+                                .foregroundStyle(IslandPalette.secondary)
 
                             Text(totalCount == 1 ? L10n.text("1 item") : L10n.format("%d items", totalCount))
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.42))
+                                .font(IslandTypography.metadata)
+                                .foregroundStyle(IslandPalette.tertiary)
                         }
 
                         Spacer(minLength: 8)
@@ -315,43 +315,29 @@ private struct TrayDropPane: View {
                             .accessibilityIdentifier("shelf-search")
                             .focused(searchFocused)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.86))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
+                            .islandInputChrome()
                             .frame(minWidth: 60, idealWidth: 150, maxWidth: 150)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.white.opacity(0.06))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                            )
 
                         if selection.ids.isEmpty {
-                            Menu("Clear") {
-                                Button("Clear Unpinned") {
+                            let clearTitle = L10n.text("Clear")
+                            IslandMenuButton(label: clearTitle, title: clearTitle, module: .shelf, items: [
+                                IslandMenuItem(title: L10n.text("Clear Unpinned"), isEnabled: shelf.items.contains { !$0.isPinned }) {
                                     shelf.requestRemoval(shelf.visibleItems.filter { !$0.isPinned })
-                                }
-                                .disabled(!shelf.items.contains { !$0.isPinned })
-
-                                Button("Clear All") {
+                                },
+                                IslandMenuItem(title: L10n.text("Clear All")) {
                                     clearCandidates = shelf.visibleItems
                                     confirmClear = true
                                 }
-                            }
-                            .menuStyle(.borderlessButton)
+                            ])
+                            .islandInputChrome(insetsContent: false)
                             .fixedSize()
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.78))
                             .hoverPointer()
                         }
                     }
                     .lineLimit(1)
                     .font(.system(size: 11, weight: .medium))
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
+                    .buttonStyle(IslandButtonStyle(.secondary))
+                    .basicControlSize(.small)
                     .frame(height: ShelfGridLayout.toolbarHeight)
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("shelf-toolbar")
@@ -360,10 +346,10 @@ private struct TrayDropPane: View {
                         VStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.64))
+                                .foregroundStyle(IslandPalette.secondary)
                             Text("No matches")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.68))
+                                .foregroundStyle(IslandPalette.secondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -437,8 +423,8 @@ private struct ExpandedShelfChip: View {
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(item.subtitle)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.secondary)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -455,7 +441,7 @@ private struct ExpandedShelfChip: View {
                     .stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle())
         .hoverPointer()
         .onDrag {
             shelf.dragProvider(for: item)
@@ -485,7 +471,7 @@ private struct TrayItemTile: View {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.92))
+                        .foregroundStyle(IslandPalette.primary)
                         .frame(width: 15, height: 15)
                         .background(.ultraThinMaterial, in: Circle())
                         .background(
@@ -521,7 +507,7 @@ private struct TrayItemTile: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(IslandPalette.primary)
                         .frame(width: 15, height: 15)
                         .background(.ultraThinMaterial, in: Circle())
                         .background(
@@ -534,7 +520,7 @@ private struct TrayItemTile: View {
                         )
                         .shadow(color: .white.opacity(0.08), radius: 6)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandButtonStyle())
                 .offset(x: 4, y: -4)
                 .opacity(isHovering || isSelected ? 1 : 0)
                 .allowsHitTesting(isHovering || isSelected)
@@ -551,8 +537,8 @@ private struct TrayItemTile: View {
                     .frame(maxWidth: .infinity, minHeight: 28, alignment: .top)
 
                 Text(item.subtitle)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.46))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity)

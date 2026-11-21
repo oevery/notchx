@@ -15,6 +15,6 @@ struct WeatherFreshnessView: View {
             Text("Updated")
             Text(updated, style: .time)
             if manager.isStale(at: now) { Text("Outdated forecast").foregroundStyle(.orange) }
-        }.font(.caption2).foregroundStyle(.secondary)
+        }.font(IslandTypography.metadata).foregroundStyle(IslandPalette.secondary)
     }
 }

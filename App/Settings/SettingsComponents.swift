@@ -54,7 +54,6 @@ struct SettingGroup<Content: View>: View {
     var body: some View {
         GroupBox { VStack(alignment: .leading, spacing: 0) { content }.frame(maxWidth: .infinity, alignment: .leading) }
             .toggleStyle(.switch)
-            .controlSize(.regular)
     }
 }
 
@@ -70,7 +69,6 @@ struct SettingPageHeader<Trailing: View>: View {
                 .accessibilityIdentifier("settings-page-title")
             trailing
         }
-        .controlSize(.regular)
     }
 }
 
@@ -106,7 +104,6 @@ struct SettingRow<Content: View>: View {
             controls
         }
         .font(.body)
-        .controlSize(.regular)
         .buttonStyle(.bordered)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, inset).padding(.vertical, 11)
@@ -178,7 +175,7 @@ struct SettingContent<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         VStack(alignment: .leading, spacing: 8) { content }
-            .font(.body).controlSize(.regular)
+            .font(.body)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, inset).padding(.vertical, 11)
     }
@@ -225,7 +222,7 @@ struct SettingSwitch: View {
 
     var body: some View {
         Toggle(displayTitle, isOn: $isOn)
-            .labelsHidden().toggleStyle(.switch).controlSize(.regular)
+            .labelsHidden().toggleStyle(.switch)
             .accessibilityLabel(displayTitle)
     }
 }
@@ -234,7 +231,7 @@ struct SettingActions<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) { content }
-            .controlSize(.regular).buttonStyle(.bordered)
+            .buttonStyle(.bordered)
     }
 }
 
@@ -379,13 +376,14 @@ struct SettingRestoreRow: View {
 /// The disclosure owns its inset; child rows must not add the same inset again.
 struct SettingDisclosureGroup<Content: View>: View {
     @Environment(\.islandMotion) private var motion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isExpanded = false
     let title: String
     var identifier = ""
     @ViewBuilder var content: Content
 
     var body: some View {
-        DisclosureGroup(L10n.text(title), isExpanded: $isExpanded.animation(motion.content)) {
+        DisclosureGroup(L10n.text(title), isExpanded: $isExpanded.animation(reduceMotion || motion.reduced ? nil : motion.content)) {
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .environment(\.settingRowInset, 0)
@@ -402,9 +400,10 @@ private struct SettingDisclosureStyle: DisclosureGroupStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            IslandDisclosureButton(expanded: configuration.isExpanded, action: { configuration.isExpanded.toggle() }) {
-                configuration.label
+            DisclosureTrigger(expanded: configuration.isExpanded, action: { configuration.isExpanded.toggle() }) {
+                configuration.label.font(.body.weight(.medium))
             }
+            .buttonStyle(.plain)
             .accessibilityIdentifier(identifier)
             if configuration.isExpanded {
                 configuration.content.padding(.top, 8).transition(.opacity)
@@ -578,7 +577,6 @@ struct SettingSliderNumberField: View {
             SettingNumberField(title: title, value: $value, range: range, unit: unit,
                                resetGeneration: resetGeneration + sliderEditGeneration, identifier: identifier)
         }
-        .controlSize(.regular)
         .frame(width: SettingMetrics.controlColumn)
         .onAppear {
             retainedSliderRange = SettingValueBounds.sliderRange(for: value, in: range, commonRange: commonRange)

@@ -196,56 +196,62 @@ struct NowPlayingPlaybackCompactButton: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var manager = NowPlayingManager.shared
-    @State private var isHovering = false
 
     var body: some View {
+        let action = CompactPlaybackAction(isPlaying: manager.isPlaying)
         Button {
             appState.beginCompactControlInteraction()
             manager.togglePlayPause()
         } label: {
             CompactSlot(kind: .indicator) { _ in
-                CompactPlaybackIndicator(isPlaying: manager.isPlaying, isHovering: isHovering,
+                CompactPlaybackIndicator(action: action,
                     animatesSpectrum: contentActive && !reduceMotion && !appState.shouldReduceMotion,
                     barColor: manager.albumArtColor ?? .white)
-                .animation(reduceMotion ? .easeOut(duration: 0.08) : appState.motion.feedback, value: manager.isPlaying)
-                .animation(reduceMotion ? .easeOut(duration: 0.08) : appState.motion.feedback, value: isHovering)
+                .animation(reduceMotion ? .easeOut(duration: 0.08) : appState.motion.feedback, value: action)
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(action.title)
         .disabled(!manager.hasControllableTrack)
         .allowsHitTesting(!manager.isControlPending)
         .hoverPointer()
-        .onHover { hovering in
-            isHovering = hovering
-        }
     }
+}
+
+enum CompactPlaybackAction {
+    case play, pause
+
+    init(isPlaying: Bool) {
+        self = isPlaying ? .pause : .play
+    }
+
+    var symbol: String { self == .pause ? "pause.fill" : "play.fill" }
+    var title: String { self == .pause ? L10n.text("Pause") : L10n.text("Play") }
 }
 
 /// All playback states occupy one centered footprint inside CompactSlot.
 struct CompactPlaybackIndicator: View {
-    let isPlaying: Bool
-    let isHovering: Bool
+    let action: CompactPlaybackAction
     let animatesSpectrum: Bool
     var barColor: NSColor = .white
 
-    private var stateID: String { isPlaying ? (isHovering ? "pause" : "spectrum") : "play" }
-
     var body: some View {
         ZStack {
-            Group {
-                if isPlaying && !isHovering {
+            HStack(spacing: 2) {
+                Image(systemName: action.symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(IslandPalette.primary)
+                    .frame(width: 8, height: 18)
+                if action == .pause {
                     EqualizerBarsView(isPlaying: animatesSpectrum, barColor: barColor)
-                        .frame(width: 20, height: 16)
-                } else {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(isPlaying ? 0.95 : 0.9))
-                        .frame(width: 18, height: 18, alignment: .center)
+                        .frame(width: 16, height: 16)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
-            .id(stateID)
+            .id(action)
             .transition(.opacity)
         }
-        .frame(width: 20, height: 18, alignment: .center)
+        .frame(width: Constants.compactSlotContentSize, height: 18)
     }
 }

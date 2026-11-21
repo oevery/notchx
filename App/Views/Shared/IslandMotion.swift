@@ -7,20 +7,27 @@ struct IslandMotion {
     let bounce: Double
 
     private var scale: Double { 1 / max(0.5, min(2, speed.isFinite ? speed : 1)) }
-    var surfaceDuration: Double { (reduced ? 0.1 : 0.22) * scale }
-    var contentDuration: Double { (reduced ? 0.08 : 0.12) * scale }
+    var surfaceDuration: Double { (reduced ? 0.1 : 0.28) * scale }
+    var contentDuration: Double { (reduced ? 0.08 : 0.18) * scale }
     var surface: Animation {
         reduced ? .easeOut(duration: surfaceDuration)
-            : .smooth(duration: surfaceDuration, extraBounce: min(max(bounce, 0), 0.05))
+            : .smooth(duration: surfaceDuration, extraBounce: min(max(bounce * 0.3, 0), 0.12))
     }
     var content: Animation { .easeInOut(duration: contentDuration) }
     // A collapsing shell must never undershoot its final content width.
     var collapse: Animation { .easeOut(duration: (reduced ? 0.1 : 0.18) * scale) }
     var resize: Animation { .easeInOut(duration: (reduced ? 0.08 : 0.14) * scale) }
-    var artwork: Animation { .easeInOut(duration: (reduced ? 0.1 : 0.22) * scale) }
-    var feedback: Animation { .easeInOut(duration: (reduced ? 0.06 : 0.1) * scale) }
+    var artwork: Animation {
+        reduced ? .easeOut(duration: 0.1 * scale) : .smooth(duration: 0.26 * scale)
+    }
+    var feedback: Animation {
+        reduced ? .easeOut(duration: 0.08 * scale) : .snappy(duration: 0.16 * scale, extraBounce: 0)
+    }
     var transition: AnyTransition {
         .opacity
+    }
+    var pageTransition: AnyTransition {
+        reduced ? .opacity : .opacity.combined(with: .scale(scale: 0.985, anchor: .top))
     }
 }
 

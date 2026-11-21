@@ -152,7 +152,7 @@ struct TeleprompterScrollingTextView: View {
 
         return Text(manager.wordTrackingDisplayText)
             .font(.system(size: manager.fontSize, weight: .regular))
-            .foregroundColor(.white.opacity(0.92))
+            .foregroundStyle(IslandPalette.primary)
             .lineSpacing(manager.fontSize * 0.35)
             .multilineTextAlignment(manager.textAlignment)
             .fixedSize(horizontal: false, vertical: true)
@@ -244,7 +244,7 @@ private struct TeleprompterExpandedInner: View {
         HStack(spacing: 12) {
             Image(systemName: "scroll")
                 .font(.system(size: 22))
-                .foregroundColor(.white.opacity(manager.isPlaying ? 0.85 : 0.28))
+                .foregroundStyle(manager.isPlaying ? IslandPalette.label : IslandPalette.secondary)
                 .symbolEffect(.pulse, isActive: manager.isPlaying)
                 .frame(width: 26)
 
@@ -366,7 +366,7 @@ struct TeleprompterEmptyState: View {
 
     var body: some View {
         if compact {
-            scriptButton.buttonStyle(.plain).font(.caption).foregroundStyle(.primary)
+            scriptButton.buttonStyle(IslandButtonStyle()).font(IslandTypography.secondary).foregroundStyle(.primary)
         } else {
             VStack(spacing: 8) {
                 Text(L10n.text(hasDraft ? "You have a saved draft" : "No script added yet"))
@@ -375,8 +375,8 @@ struct TeleprompterEmptyState: View {
                 Text(L10n.text(hasDraft
                                ? "Continue editing, then choose Done to start prompting."
                                : "Add or paste a script to start prompting."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(IslandTypography.secondary)
+                    .foregroundStyle(IslandPalette.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 360)
@@ -385,7 +385,6 @@ struct TeleprompterEmptyState: View {
                     HStack(spacing: 10) { emptyActions }.fixedSize()
                     VStack(spacing: 6) { emptyActions }.fixedSize()
                 }
-                .controlSize(.regular)
                 .font(.callout)
                 .lineLimit(1)
                 .fixedSize(horizontal: false, vertical: true)
@@ -400,11 +399,11 @@ struct TeleprompterEmptyState: View {
 
     @ViewBuilder
     private var emptyActions: some View {
-        scriptButton.buttonStyle(.borderedProminent)
+        scriptButton.buttonStyle(IslandButtonStyle(.primary))
         TeleprompterReadingOptionsButton(manager: manager) {
             Text(L10n.text("Reading settings"))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(IslandButtonStyle(.secondary))
         .dataAnnotationID("teleprompter-empty-settings-control")
     }
 
@@ -428,9 +427,9 @@ private func iconButton(
     let button = Button(action: action) {
         Image(systemName: icon)
             .font(.system(size: size, weight: bold ? .bold : .regular))
-            .foregroundColor(.white.opacity(bold ? 1.0 : 0.55))
+            .foregroundStyle(bold ? IslandPalette.primary : IslandPalette.secondary)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(IslandButtonStyle())
     .hoverPointer()
 
     if let annotationID {
@@ -496,12 +495,12 @@ private struct TeleprompterSpeechStatus: View {
         if manager.listeningMode == .wordTracking {
             HStack(spacing: 5) {
                 Image(systemName: statusIcon)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(IslandTypography.metadata)
                 if manager.isPlaying, speech.isListening {
                     levelMeter
                 }
                 Text(statusText)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(IslandTypography.metadata)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }

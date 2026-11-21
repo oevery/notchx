@@ -128,6 +128,23 @@ final class SettingsOrganizationTests: XCTestCase {
         }
     }
 
+    func testSettingsDisclosureExpandsEnergyDiagnostics() async throws {
+        let (defaults, domain) = preferences()
+        let state = AppState(preferenceStore: defaults)
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let host = NSHostingView(rootView: AdvancedSettingsView().environmentObject(state).basicControlSize(.regular))
+        let window = makeWindow(host: host, width: 760, height: 680)
+        defer { window.close() }
+        let id = "settings-disclosure-Energy Diagnostics"
+        let trigger = try await NativeUI.waitForElement(in: host, id: id)
+        XCTAssertEqual(trigger.accessibilityPerformPress?(), true)
+        try await NativeUI.waitFor("expanded Energy Diagnostics", in: host) {
+            guard let control = NativeUI.find(in: host, id: id) else { return false }
+            let value: (() -> Any?)? = control.accessibilityValue
+            return (value?() as? String) == L10n.text("Expanded") || (value?() as? NSNumber)?.intValue == 1
+        }
+    }
+
     func testAppearanceControlsRestoreAndUndoUseExplicitOwnerDespiteForeignEnvironment() async throws {
         let (defaults, domain) = preferences()
         let (foreignDefaults, foreignDomain) = preferences()
@@ -390,7 +407,7 @@ final class SettingsOrganizationTests: XCTestCase {
         let state = AppState(preferenceStore: defaults)
         let manager = NotificationManager(state: state, observesSystemEvents: false, presentNotification: {})
         manager.pauseAlerts(for: 1800)
-        let host = NSHostingView(rootView: NotificationAlertControls(manager: manager))
+        let host = NSHostingView(rootView: NotificationAlertControls(manager: manager).environmentObject(state))
         let window = makeWindow(host: host, width: 520, height: 80)
         defer { window.close() }
         _ = try await NativeUI.waitForElement(in: host, id: "notification-resume-alerts")

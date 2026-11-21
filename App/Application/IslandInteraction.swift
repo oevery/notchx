@@ -27,7 +27,7 @@ struct IslandPresentationHandoff: Equatable {
 
 /// Native popovers keep their source surface stable and release their own hold
 /// on every exit, including an outgoing page or a new window handoff.
-private struct IslandPopoverInteraction: ViewModifier {
+private struct IslandTransientInteraction: ViewModifier {
     @EnvironmentObject private var appState: AppState
     @Environment(\.islandContentActive) private var contentActive
     @Binding var isPresented: Bool
@@ -59,8 +59,8 @@ private struct IslandPopoverInteraction: ViewModifier {
 }
 
 extension View {
-    func islandPopoverInteraction(isPresented: Binding<Bool>, module: ModuleType) -> some View {
-        modifier(IslandPopoverInteraction(isPresented: isPresented, module: module))
+    func islandTransientInteraction(isPresented: Binding<Bool>, module: ModuleType) -> some View {
+        modifier(IslandTransientInteraction(isPresented: isPresented, module: module))
     }
 }
 

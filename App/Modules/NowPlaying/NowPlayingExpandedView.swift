@@ -21,13 +21,13 @@ struct NowPlayingExpandedView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslandButtonStyle())
                     .help(L10n.text("Open playback page"))
                     Text(manager.playbackStatusDescription ?? manager.artist)
                         .contentTransition(.opacity)
                         .animation(appState.contentSwapAnimation, value: manager.artist)
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(IslandPalette.secondary)
                         .lineLimit(1)
                     PlaybackSeekBar(progress: manager.progress, duration: manager.duration,
                                     elapsedText: manager.formattedElapsedTime, durationText: manager.formattedDuration,
@@ -42,11 +42,10 @@ struct NowPlayingExpandedView: View {
                         .animation(appState.motion.feedback, value: manager.isPlaying)
                         .font(.system(size: 18))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandButtonStyle())
                 .disabled(!manager.hasControllableTrack)
                 .allowsHitTesting(!manager.isControlPending)
             }
-            .foregroundStyle(.white)
         }
     }
 }
@@ -61,7 +60,7 @@ struct NowPlayingSourceButton<Label: View>: View {
             appState.beginCompactControlInteraction()
             manager.openCurrentPlayer(fromIsland: appState)
         } label: { label() }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle())
         .disabled(!manager.canOpenCurrentPlayer)
         .help(L10n.format("Open %@", manager.sourceName))
         .accessibilityLabel(L10n.format("Open %@", manager.sourceName))
@@ -106,8 +105,8 @@ struct PlaybackSeekBar: View {
                     Spacer(minLength: 4)
                     Text(durationText)
                 }
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .font(IslandTypography.time)
+                .foregroundStyle(IslandPalette.secondary)
                 .lineLimit(1)
             }
         }

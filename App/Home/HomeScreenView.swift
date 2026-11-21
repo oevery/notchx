@@ -9,7 +9,7 @@ struct HomeScreenView: View {
         Group {
             switch panels.count {
             case 0:
-                HomeEmptyState(
+                IslandEmptyState(
                     icon: "square.grid.2x2",
                     title: Text("No home modules enabled"),
                     subtitle: Text("Enable modules in Settings to show them here."),
@@ -71,7 +71,7 @@ struct HomeScreenView: View {
 
     private var homeDivider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(IslandPalette.separator)
             .frame(width: 1)
             .padding(.vertical, 4)
     }
@@ -182,7 +182,7 @@ struct HomeNowPlayingContent: View {
     var body: some View {
         Group {
             if data.title.isEmpty {
-                HomeEmptyState(icon: "music.note.house", title: Text(data.emptyTitle), subtitle: Text(data.emptySubtitle))
+                IslandEmptyState(icon: "music.note.house", title: Text(data.emptyTitle), subtitle: Text(data.emptySubtitle))
             } else if isDetailed {
                 HStack(spacing: 24) {
                     artwork(size: 112)
@@ -194,10 +194,10 @@ struct HomeNowPlayingContent: View {
                             Spacer(minLength: 8)
                             Button(action: openPlayer) {
                                 Label(data.sourceName, systemImage: "arrow.up.forward.app")
-                                    .font(.caption)
+                                    .font(IslandTypography.secondary)
                                     .lineLimit(1)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(IslandButtonStyle())
                             .disabled(!data.canOpenPlayer)
                             .help(L10n.format("Open %@", data.sourceName))
                         }
@@ -206,6 +206,7 @@ struct HomeNowPlayingContent: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
+                    IslandStatusLabel(title: Text("Now Playing"))
                     metadata
                     HStack(spacing: 18) {
                         artwork(size: 68)
@@ -229,7 +230,7 @@ struct HomeNowPlayingContent: View {
                             Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslandButtonStyle())
                     .help(L10n.text("Open playback page"))
                 }
                 Text(data.subtitle)
@@ -267,7 +268,7 @@ struct HomeNowPlayingContent: View {
                 .frame(width: size, height: size)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandButtonStyle())
             .disabled(!data.canOpenPlayer)
             .help(L10n.format("Open %@", data.sourceName))
             .accessibilityLabel(L10n.format("Open %@", data.sourceName))
@@ -289,29 +290,29 @@ struct HomeNowPlayingContent: View {
             }
             if isDetailed, let mode = data.shuffleMode {
                 Button(action: toggleShuffle) {
-                    Image(systemName: "shuffle").foregroundStyle(mode == .off ? .secondary : .primary)
+                    Image(systemName: "shuffle").foregroundStyle(mode == .off ? IslandPalette.icon : IslandPalette.primary)
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandButtonStyle())
                 .disabled(!data.canChangeMode)
                 .help(shuffleDescription(mode))
                 .accessibilityLabel(L10n.text("Shuffle"))
             }
             transportButton("backward.fill", label: "Previous track", action: previousTrack)
             transportButton(data.isPlaying ? "pause.fill" : "play.fill",
-                            label: data.isPlaying ? "Pause" : "Play", action: togglePlayPause)
+                            label: data.isPlaying ? "Pause" : "Play", emphasized: true, action: togglePlayPause)
             transportButton("forward.fill", label: "Next track", action: nextTrack)
             if isDetailed, let mode = data.repeatMode {
                 Button(action: cycleRepeat) {
                     Image(systemName: mode == .track ? "repeat.1" : "repeat")
-                        .foregroundStyle(mode == .off ? .secondary : .primary)
+                        .foregroundStyle(mode == .off ? IslandPalette.icon : IslandPalette.primary)
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandButtonStyle())
                 .disabled(!data.canChangeMode)
                 .help(repeatDescription(mode))
                 .accessibilityLabel(repeatDescription(mode))
@@ -321,7 +322,7 @@ struct HomeNowPlayingContent: View {
         .allowsHitTesting(!data.isControlPending)
     }
 
-    private func transportButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    private func transportButton(_ symbol: String, label: String, emphasized: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             ZStack {
                 Image(systemName: symbol)
@@ -329,11 +330,11 @@ struct HomeNowPlayingContent: View {
                     .transition(.opacity)
             }
             .font(.system(size: 14, weight: .semibold))
-            .frame(width: 32, height: 32)
+            .frame(width: emphasized ? nil : 32, height: emphasized ? nil : 32)
             .contentShape(Rectangle())
             .animation(reduceMotion || data.reduceAnimations ? .easeOut(duration: 0.08) : data.feedbackAnimation, value: symbol)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle(emphasized ? .primary : .icon))
         .help(L10n.text(label))
         .accessibilityLabel(L10n.text(label))
     }
@@ -372,13 +373,14 @@ private struct HomeCalendarPanel: View {
             }
 
             if upcomingEvents.isEmpty {
-                HomeEmptyState(
+                IslandEmptyState(
                     icon: "calendar",
                     title: Text("Nothing coming up"),
                     subtitle: Text("Your schedule is clear for now.")
                 )
             } else {
                 VStack(alignment: .leading, spacing: 9) {
+                    IslandStatusLabel(title: Text("Up Next"))
                     ForEach(Array(upcomingEvents.prefix(3).enumerated()), id: \.offset) { _, event in
                         HomeEventRow(
                             event: event,
@@ -432,7 +434,7 @@ private struct HomeWeatherPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             WeatherFreshnessView(manager: manager)
             if isWeatherUnavailable {
-                HomeEmptyState(
+                IslandEmptyState(
                     icon: "cloud.sun",
                     title: manager.isLoading ? Text("Fetching weather") : Text("Weather unavailable"),
                     subtitle: manager.isLoading ? Text("Getting your local conditions.") : Text(manager.errorMessage ?? L10n.text("Allow location access to fetch local weather."))
@@ -442,7 +444,7 @@ private struct HomeWeatherPanel: View {
                     HStack(alignment: .center, spacing: 10) {
                         Image(systemName: manager.weather.conditionIcon)
                             .font(.system(size: 22, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.92))
+                            .symbolRenderingMode(.multicolor)
                             .frame(width: 34, height: 34)
                             .background(
                                 Circle()
@@ -531,7 +533,7 @@ private struct HomeEventRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(event.title ?? L10n.text("Upcoming event"))
                     .font(HomeTypography.bodyTitleFont)
-                    .foregroundStyle(HomeTypography.secondaryText)
+                    .foregroundStyle(HomeTypography.primaryText)
                     .lineLimit(1)
 
                 HStack(spacing: 6) {
@@ -543,12 +545,12 @@ private struct HomeEventRow: View {
                     if let countdown {
                         Text(countdown)
                             .font(HomeTypography.badgeFont)
-                            .foregroundStyle(HomeTypography.primaryText.opacity(0.92))
+                            .foregroundStyle(IslandPalette.label)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule(style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
+                                    .fill(IslandPalette.separator)
                             )
                     }
                 }
@@ -562,14 +564,14 @@ private struct HomeEventRow: View {
                 } label: {
                     Image(systemName: "video.fill")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.92))
+                        .foregroundStyle(IslandPalette.icon)
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(Color.white.opacity(0.06))
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandButtonStyle())
             }
         }
     }
@@ -579,49 +581,17 @@ private struct HomeEventRow: View {
     }
 }
 
-private struct HomeEmptyState: View {
-    let icon: String
-    // Keep localized keys distinct from already-localized provider messages.
-    let title: Text
-    let subtitle: Text
-    var fillsAvailableSpace = false
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(HomeTypography.tertiaryText)
-                .padding(.bottom, 2)
-
-            title
-                .font(HomeTypography.bodyTitleFont)
-                .foregroundStyle(HomeTypography.primaryText.opacity(0.9))
-
-            subtitle
-                .font(HomeTypography.secondaryFont)
-                .foregroundStyle(HomeTypography.secondaryText)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-        }
-        .frame(
-            maxWidth: .infinity,
-            maxHeight: fillsAvailableSpace ? .infinity : nil,
-            alignment: .center
-        )
-    }
-}
-
 private enum HomeTypography {
     static let heroFont = Font.system(size: 18, weight: .semibold)
     static let temperatureFont = Font.system(size: 24, weight: .semibold)
     static let panelTitleFont = Font.system(size: 15, weight: .semibold)
     static let bodyTitleFont = Font.system(size: 14, weight: .semibold)
     static let valueFont = Font.system(size: 14, weight: .semibold)
-    static let secondaryFont = Font.system(size: 11, weight: .medium)
-    static let badgeFont = Font.system(size: 10, weight: .semibold)
+    static let secondaryFont = IslandTypography.secondary
+    static let badgeFont = IslandTypography.metadata
     static let metaFont = Font.system(size: 10, weight: .medium, design: .monospaced)
 
-    static let primaryText = Color.white.opacity(0.88)
-    static let secondaryText = Color.white.opacity(0.58)
-    static let tertiaryText = Color.white.opacity(0.36)
+    static let primaryText = IslandPalette.primary
+    static let secondaryText = IslandPalette.secondary
+    static let tertiaryText = IslandPalette.tertiary
 }

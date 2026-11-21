@@ -3,6 +3,8 @@ import SwiftUI
 struct IslandContainerView: View {
     private let shelf: ShelfStore?
     @EnvironmentObject var appState: AppState
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     @Namespace private var artworkNamespace
     @State private var motionOwner = UUID()
     @State private var renderedSurface: SurfaceGeometry?
@@ -19,16 +21,15 @@ struct IslandContainerView: View {
             islandSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // The island surface stays black in either system appearance. Resolve
-        // semantic text and native controls against that local dark surface.
-        // Also set the presentation preference: an environment override alone
-        // leaves AppKit popovers/dialogs in the system's light appearance.
+        // The island surface is locally dark; native popovers set their own appearance.
         .environment(\.colorScheme, .dark)
         .preferredColorScheme(.dark)
+        .basicControlSize(.regular)
         .notchXLocalized()
         .environment(\.playbackArtworkNamespace, artworkNamespace)
         .environment(\.playbackArtworkTrackID, appState.nowPlayingEnabled ? NowPlayingManager.shared.presentationTrackID : "")
         .environment(\.islandMotion, appState.motion)
+        .environment(\.islandAppearance, appearance)
         .environment(\.islandContentSelection, IslandContentSelection(
             state: appState.currentState, module: appState.currentState == .compact ? appState.compactPresentationModule : appState.activeModule,
             tab: appState.fullExpandedSelectedTab))
@@ -58,37 +59,16 @@ struct IslandContainerView: View {
 
     // MARK: - Surface
 
+    private var appearance: IslandAppearance {
+        appState.islandAppearance(reduceTransparency: reduceTransparency, increasedContrast: contrast == .increased)
+    }
+
     private var islandSurface: some View {
         let surfaceSize = (renderedSurface ?? targetSurface).size
-        return ZStack(alignment: .top) {
-            islandShape
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.98),
-                            Color.black.opacity(0.94)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-
-            islandContent
-                .frame(width: surfaceSize.width, height: surfaceSize.height, alignment: .top)
-        }
-        .frame(width: surfaceSize.width, height: surfaceSize.height)
+        return islandContent.frame(width: surfaceSize.width, height: surfaceSize.height, alignment: .top)
         .clipShape(islandShape)
-        .compositingGroup()
-        .shadow(
-            color: .black.opacity(ambientShadowOpacity),
-            radius: ambientShadowRadius,
-            y: ambientShadowYOffset
-        )
-        .shadow(
-            color: .black.opacity(keyShadowOpacity),
-            radius: keyShadowRadius,
-            y: keyShadowYOffset
-        )
+        .background { IslandSurfaceBackground(shape: islandShape, appearance: appearance) }
+        .background { islandShadow }
         .overlay {
             if appState.shelfEnabled && isShelfDropTargeted {
                 islandShape
@@ -119,6 +99,21 @@ struct IslandContainerView: View {
             return (shelf ?? .shared).handleDrop(providers: providers) { _ in
                 appState.presentShelfAfterDrop()
             }
+        }
+    }
+
+    @ViewBuilder
+    private var islandShadow: some View {
+        if appState.currentState != .compact {
+            ZStack {
+                islandShape.fill(.black)
+                    .shadow(color: .black.opacity(ambientShadowOpacity), radius: ambientShadowRadius, y: ambientShadowYOffset)
+                    .shadow(color: .black.opacity(keyShadowOpacity), radius: keyShadowRadius, y: keyShadowYOffset)
+                islandShape.fill(.black).blendMode(.destinationOut)
+            }
+            .compositingGroup()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
     }
 

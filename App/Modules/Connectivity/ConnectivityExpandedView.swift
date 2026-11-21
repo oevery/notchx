@@ -15,7 +15,9 @@ struct ConnectivityExpandedView: View {
                 HStack {
                     Button(L10n.text("Bluetooth Settings")) { PermissionsManager.shared.openBluetoothSettings(fromIsland: appState) }
                     Button(L10n.text("Wi-Fi Settings")) { openWiFiSettings() }
-                }.controlSize(.small)
+                }
+                .buttonStyle(IslandButtonStyle(.secondary))
+                .basicControlSize(.small)
             }
 
             // Connected devices list (full expanded)
@@ -26,16 +28,16 @@ struct ConnectivityExpandedView: View {
                     HStack(spacing: 8) {
                         Image(systemName: device.deviceType.iconName)
                             .font(.system(size: 14))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundStyle(IslandPalette.secondary)
                             .frame(width: 20)
 
                         Text(device.name)
                             .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundStyle(IslandPalette.label)
 
                         Spacer()
                         Text(device.batteryLevel.map { L10n.format("Battery %d%%", $0) } ?? L10n.text("Battery unavailable"))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
 
                         Circle()
                             .fill(.green)
@@ -49,12 +51,12 @@ struct ConnectivityExpandedView: View {
                     HStack(spacing: 8) {
                         Image(systemName: wifi.signalIconName)
                             .font(.system(size: 14))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundStyle(IslandPalette.secondary)
                             .frame(width: 20)
 
                         Text(ssid)
                             .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundStyle(IslandPalette.label)
 
                         Spacer()
                     }
@@ -124,7 +126,7 @@ struct ConnectivityExpandedView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.text(status))
-                    .font(.system(size: 10))
+                    .font(IslandTypography.metadata)
                     .foregroundColor(statusColor)
 
                 Text(title)
@@ -135,7 +137,7 @@ struct ConnectivityExpandedView: View {
                 if let detail, !detail.isEmpty {
                     Text(detail)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundStyle(IslandPalette.secondary)
                         .lineLimit(1)
                 }
             }

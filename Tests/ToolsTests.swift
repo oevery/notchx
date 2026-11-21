@@ -195,6 +195,30 @@ final class ToolsTests: XCTestCase {
         }
     }
 
+    func testCustomDurationDraftOnlyChangesDefaultsWhenConfirmed() {
+        withTools { manager, state, assertion, _, _ in
+            let locale = Locale(identifier: "en")
+            state.keepAwakeDuration = .thirtyMinutes
+            state.keepAwakeCustomMinutes = 90
+            var draft = KeepAwakeDurationDraft(minutes: 90, locale: locale)
+            draft.text = "-4"
+            XCTAssertEqual(draft.minutes(in: locale), 1)
+            draft.text = "1,800"
+            XCTAssertEqual(draft.minutes(in: locale), 1440)
+            draft.text = "invalid"
+            XCTAssertEqual(draft.minutes(in: locale), 90)
+            draft.setMinutes(38, locale: locale)
+            XCTAssertEqual(state.keepAwakeCustomMinutes, 90)
+            XCTAssertEqual(state.keepAwakeDuration, .thirtyMinutes)
+            XCTAssertEqual(draft.minutes(in: locale), 38)
+            draft.confirm(in: state, locale: locale)
+            XCTAssertEqual(state.keepAwakeCustomMinutes, 38)
+            XCTAssertEqual(state.keepAwakeDuration, .custom)
+            XCTAssertFalse(manager.isKeepingAwake)
+            XCTAssertEqual(assertion.acquisitions, 0)
+        }
+    }
+
     func testCustomTimeIsBoundedAndEditingDefaultsDoesNotChangeRunningDeadline() {
         withTools { manager, state, _, _, advance in
             state.keepAwakeCustomMinutes = -10
@@ -337,15 +361,30 @@ final class ToolsTests: XCTestCase {
     }
 
     func testAwakeUsesMusicSideSlotGeometryAndRestoresIdleContentOnStop() {
-        withTools { manager, state, _, _, _ in
+        withTools { manager, state, assertion, _, advance in
             state.presentationPreferences.idleContent = .battery
             state.agentEnabled = false
             state.nowPlayingEnabled = false
             state.updatePresentationContext(screen: nil)
-            manager.startKeepingAwake(for: .thirtyMinutes)
+            state.keepAwakeDuration = .custom
+            state.keepAwakeCustomMinutes = 37
+            state.presentFullExpandedModule(.tools)
+            manager.startKeepingAwake(for: state.keepAwakeDuration)
+            XCTAssertEqual(manager.awakeRemaining, 37 * 60)
+            state.dismiss()
+            XCTAssertEqual(state.currentState, .compact)
             XCTAssertEqual(state.compactPresentationModule, .builtIn(.tools))
             XCTAssertTrue(state.fullExpandedTabs.contains(.module(.builtIn(.tools))))
+            XCTAssertTrue(manager.isKeepingAwake)
+            XCTAssertEqual(assertion.releases, 0)
+            advance(60)
+            state.presentFullExpandedModule(.tools)
+            XCTAssertEqual(state.fullExpandedSelectedTab, .module(.builtIn(.tools)))
+            XCTAssertEqual(manager.awakeRemaining, 36 * 60)
             manager.stopKeepingAwake()
+            XCTAssertEqual(assertion.releases, 1)
+            XCTAssertFalse(manager.isKeepingAwake)
+            state.dismiss()
             XCTAssertEqual(state.compactPresentationModule, .builtIn(.battery))
         }
     }
@@ -362,7 +401,7 @@ final class ToolsTests: XCTestCase {
         XCTAssertEqual(resolve(attention: false, compact: false), .builtIn(.calendar))
     }
 
-    func testDefaultsChangesDoNotOpenIslandPopoverAndDurationMenuHoldsPresentation() async throws {
+    func testDurationMenuOwnsDarkAppearanceAndHoldsOnlyItsOwnPresentation() async throws {
         try await withToolsAsync { manager, state, _ in
             state.presentFullExpandedModule(.tools)
             let host = NSHostingView(rootView: ToolsView(manager: manager).environmentObject(state).frame(width: 578, height: 158))
@@ -371,51 +410,84 @@ final class ToolsTests: XCTestCase {
             window.contentView = host
             window.orderFront(nil)
             defer { window.contentView = nil; window.close() }
-            _ = try await NativeUI.waitForElement(in: host, id: "keep-awake-duration")
+            let picker = try await durationPicker(in: host)
+            let menu = try XCTUnwrap(picker.menu)
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                window.appearance = NSAppearance(named: appearance)
+                XCTAssertEqual(picker.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .darkAqua)
+                XCTAssertEqual(menu.appearance?.bestMatch(from: [.aqua, .darkAqua]), .darkAqua)
+                XCTAssertEqual(window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), appearance)
+            }
             state.keepAwakeDuration = .custom
             _ = try await NativeUI.waitForElement(in: host, id: "keep-awake-edit-custom")
             await NativeUI.drainMainQueue()
-            XCTAssertFalse(state.isControlInteractionActive, "Changing defaults must not open the island's editing popover")
-            let menu = NSMenu()
-            NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+            XCTAssertEqual(picker.selectedItem?.title, KeepAwakeDuration.custom.title)
+            XCTAssertNil(NativeUI.find(in: host, id: "keep-awake-custom-minutes"))
+            NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+            XCTAssertFalse(state.isControlInteractionActive)
+            let delegate = try XCTUnwrap(menu.delegate)
+            delegate.menuWillOpen?(menu)
             XCTAssertTrue(state.isControlInteractionActive)
             state.dismiss()
             XCTAssertEqual(state.currentState, .fullExpanded)
-            NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+            delegate.menuDidClose?(menu)
             XCTAssertFalse(state.isControlInteractionActive)
+            XCTAssertEqual(state.keepAwakeDuration, .custom)
         }
     }
 
-    func testCustomDurationPopoverOpensBelowMinutesButtonAndKeepsIslandExpanded() async throws {
+    func testCustomDurationEditsInPlaceAndRestoresMenuFocusAfterEscapeOrReturn() async throws {
         try await withToolsAsync { manager, state, _ in
-            state.keepAwakeDuration = .custom
+            state.keepAwakeDuration = .thirtyMinutes
+            state.keepAwakeCustomMinutes = 90
             state.presentFullExpandedModule(.tools)
-            let host = NSHostingView(rootView: ToolsView(manager: manager).environmentObject(state).frame(width: 578, height: 158))
-            let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
-            let window = NSWindow(contentRect: NSRect(x: screen.midX - 289, y: screen.midY, width: 578, height: 158),
-                styleMask: [], backing: .buffered, defer: false)
+            let host = NSHostingView(rootView: ToolsView(manager: manager).environmentObject(state)
+                .environment(\.colorScheme, .dark)
+                .frame(width: 578, height: 158))
+            let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 578, height: 158),
+                styleMask: [.titled], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: .darkAqua)
             window.contentView = host
-            window.orderFront(nil)
+            window.makeKeyAndOrderFront(nil)
             defer { window.contentView = nil; window.close() }
-            let button = try await NativeUI.waitForElement(in: host, id: "keep-awake-edit-custom")
-            let anchor = try NativeUI.frame(in: host, id: "keep-awake-edit-custom")
-            XCTAssertEqual(button.accessibilityPerformPress?(), true)
-            let popup = try await NativeUI.window(containing: "keep-awake-custom-minutes")
-            try await NativeUI.waitFor("popover settles at the minutes button") {
-                abs(popup.frame.midX - anchor.midX) < 12 && abs(popup.frame.maxY - anchor.minY) < 24
+            let picker = try await durationPicker(in: host)
+            for confirms in [false, true] {
+                let option = try XCTUnwrap(picker.itemArray.first { $0.title == KeepAwakeDuration.custom.title })
+                XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(option.action), to: option.target, from: option))
+                _ = try await NativeUI.waitForElement(in: host, id: "keep-awake-custom-minutes")
+                let field = try XCTUnwrap(NativeUI.nativeViews(in: host).compactMap { $0 as? NSTextField }
+                    .first { $0.accessibilityIdentifier() == "keep-awake-custom-minutes" })
+                XCTAssertTrue(field.window === window)
+                try await NativeUI.waitFor("minutes receive first responder") { field.currentEditor() != nil }
+                let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+                editor.insertText("37", replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+                XCTAssertEqual(state.keepAwakeDuration, .thirtyMinutes)
+                XCTAssertEqual(state.keepAwakeCustomMinutes, 90)
+                XCTAssertTrue(state.isControlInteractionActive)
+                state.dismiss()
+                XCTAssertEqual(state.currentState, .fullExpanded)
+                editor.doCommand(by: confirms ? #selector(NSResponder.insertNewline(_:)) : #selector(NSResponder.cancelOperation(_:)))
+                try await NativeUI.waitFor("inline edit closes and returns focus to picker", in: host) {
+                    !state.isControlInteractionActive && window.firstResponder === picker
+                }
+                XCTAssertEqual(state.keepAwakeDuration, confirms ? .custom : .thirtyMinutes)
+                XCTAssertEqual(state.keepAwakeCustomMinutes, confirms ? 37 : 90)
+                XCTAssertFalse(manager.isKeepingAwake)
             }
-            XCTAssertTrue(state.isControlInteractionActive)
-            state.handleHoverChange(false)
-            state.dismiss()
-            XCTAssertEqual(state.currentState, .fullExpanded)
-            let content = try XCTUnwrap(popup.contentView)
-            let done = try await NativeUI.waitForElement(in: content, id: "keep-awake-custom-done")
-            XCTAssertEqual(done.accessibilityPerformPress?(), true)
-            try await NativeUI.waitFor("popover releases its presentation hold") {
-                !popup.isVisible && !state.isControlInteractionActive
-            }
+            let minutes = try await NativeUI.waitForElement(in: host, id: "keep-awake-edit-custom")
+            XCTAssertEqual(minutes.accessibilityPerformPress?(), true)
+            let cancel = try await NativeUI.waitForElement(in: host, id: "keep-awake-custom-cancel")
+            XCTAssertEqual(cancel.accessibilityPerformPress?(), true)
+            try await NativeUI.waitFor("minutes button returns", in: host) { NativeUI.find(in: host, id: "keep-awake-edit-custom") != nil }
+            XCTAssertEqual(state.keepAwakeCustomMinutes, 37)
         }
+    }
+
+    private func durationPicker(in host: NSView) async throws -> NSPopUpButton {
+        _ = try await NativeUI.waitForElement(in: host, id: "keep-awake-duration")
+        return try XCTUnwrap(NativeUI.nativeViews(in: host).compactMap { $0 as? NSPopUpButton }
+            .first { $0.accessibilityIdentifier() == "keep-awake-duration" })
     }
 
     func testToolViewsFitHostBudgetAndCompactCountdownFitsMusicSideSlot() async throws {
@@ -465,7 +537,37 @@ final class ToolsTests: XCTestCase {
                     if !locked {
                         if variant != "forever" {
                             let picker = try NativeUI.frame(in: snapshot, id: "keep-awake-duration")
-                            XCTAssertLessThanOrEqual(picker.width, 136)
+                            XCTAssertLessThanOrEqual(picker.width, 164)
+                            let start = try NativeUI.frame(in: snapshot, id: "keep-awake-start")
+                            XCTAssertEqual(picker.height, BasicControlSize.regular.islandHeight, accuracy: 1)
+                            XCTAssertEqual(start.minY, picker.minY, accuracy: 1)
+                            XCTAssertEqual(start.maxY, picker.maxY, accuracy: 1)
+                            if variant == "custom" {
+                                let minutes = try NativeUI.frame(in: snapshot, id: "keep-awake-edit-custom")
+                                XCTAssertEqual(minutes.minY, picker.minY, accuracy: 1)
+                                XCTAssertEqual(minutes.maxY, picker.maxY, accuracy: 1)
+                                XCTAssertLessThanOrEqual(picker.maxX, minutes.minX)
+                                XCTAssertLessThanOrEqual(minutes.maxX, start.minX)
+                                let awakeTitle = try NativeUI.frame(in: snapshot, id: "tools-awake-title")
+                                XCTAssertGreaterThanOrEqual(awakeTitle.minY, picker.maxY)
+                                let trigger = try XCTUnwrap(NativeUI.find(in: snapshot, id: "keep-awake-edit-custom"))
+                                XCTAssertEqual(trigger.accessibilityPerformPress?(), true)
+                                _ = try await NativeUI.waitForElement(in: snapshot, id: "keep-awake-custom-done")
+                                let done = try NativeUI.frame(in: snapshot, id: "keep-awake-custom-done")
+                                let cancel = try NativeUI.frame(in: snapshot, id: "keep-awake-custom-cancel")
+                                let editedPicker = try NativeUI.frame(in: snapshot, id: "keep-awake-duration")
+                                let editedTitle = try NativeUI.frame(in: snapshot, id: "tools-awake-title")
+                                XCTAssertEqual(editedTitle, awakeTitle)
+                                XCTAssertEqual(editedPicker.minY, picker.minY, accuracy: 1)
+                                XCTAssertEqual(editedPicker.maxY, picker.maxY, accuracy: 1)
+                                XCTAssertEqual(done.minY, picker.minY, accuracy: 1)
+                                XCTAssertEqual(done.maxY, picker.maxY, accuracy: 1)
+                                XCTAssertEqual(cancel.minY, picker.minY, accuracy: 1)
+                                XCTAssertEqual(cancel.maxY, picker.maxY, accuracy: 1)
+                                let cancelButton = try XCTUnwrap(NativeUI.find(in: snapshot, id: "keep-awake-custom-cancel"))
+                                XCTAssertEqual(cancelButton.accessibilityPerformPress?(), true)
+                                _ = try await NativeUI.waitForElement(in: snapshot, id: "keep-awake-start")
+                            }
                         }
                         let awake = try NativeUI.frame(in: snapshot, id: "tools-awake-title")
                         let cleaning = try NativeUI.frame(in: snapshot, id: "tools-cleaning-title")

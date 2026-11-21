@@ -18,11 +18,13 @@ struct CalendarExpandedView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let reminder = manager.reminderEvent {
                 HStack {
-                    Text(reminder.title ?? L10n.text("Meeting reminder")).font(.caption).lineLimit(1)
+                    Text(reminder.title ?? L10n.text("Meeting reminder")).font(IslandTypography.secondary).lineLimit(1)
                     Spacer()
                     Button(L10n.text("Snooze up to 5 min")) { manager.snoozeReminder() }
                     Button(L10n.text("Ignore this reminder")) { manager.ignoreReminder() }
                 }
+                .buttonStyle(IslandButtonStyle(.secondary))
+                .basicControlSize(.small)
             }
             if (presentationState ?? appState.currentState) == .fullExpanded {
                 fullExpandedCalendar
@@ -44,7 +46,7 @@ struct CalendarExpandedView: View {
                 Spacer()
                 Text(manager.todayEvents.count == 1 ? L10n.text("1 event") : L10n.format("%d events", manager.todayEvents.count))
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(IslandPalette.secondary)
             }
 
             Group {
@@ -64,26 +66,26 @@ struct CalendarExpandedView: View {
                         if let countdown = manager.featuredCountdown {
                             Text(countdown)
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.7))
+                                .foregroundStyle(IslandPalette.secondary)
                         }
 
                         if let url = manager.joinURL(for: event) {
                             Button(action: { appState.openExternalURL(url, for: .calendar) }) {
                                 Text("Join")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(IslandTypography.metadata)
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 3)
                                     .background(Color.blue)
                                     .cornerRadius(4)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(IslandButtonStyle())
                         }
                     }
                 } else {
                     Text("No more events today")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
             }
         }
@@ -140,9 +142,9 @@ struct CalendarExpandedView: View {
                             manager.resetDisplayedMonthToCurrent()
                             manager.selectDate(Date())
                         }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.82))
+                        .buttonStyle(IslandButtonStyle())
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.label)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.white.opacity(0.1))
@@ -158,8 +160,8 @@ struct CalendarExpandedView: View {
                 LazyVGrid(columns: dayColumns, spacing: metrics.gridSpacing) {
                     ForEach(Array(orderedWeekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                         Text(symbol)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
+                            .font(IslandTypography.metadata)
+                            .foregroundStyle(IslandPalette.secondary)
                             .frame(maxWidth: .infinity, minHeight: metrics.weekdayHeight)
                     }
                 }
@@ -191,8 +193,8 @@ struct CalendarExpandedView: View {
                 Spacer()
 
                 Text(eventCountLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.45))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.tertiary)
             }
             .padding(.bottom, 8)
 
@@ -200,7 +202,7 @@ struct CalendarExpandedView: View {
                 Spacer()
                 Text("No events")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundStyle(IslandPalette.tertiary)
                     .frame(maxWidth: .infinity)
                 Spacer()
             } else {
@@ -229,7 +231,7 @@ struct CalendarExpandedView: View {
                 Spacer()
                 Text("Nothing this week")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundStyle(IslandPalette.tertiary)
                     .frame(maxWidth: .infinity)
                 Spacer()
             } else {
@@ -248,8 +250,8 @@ struct CalendarExpandedView: View {
     private func upcomingDaySection(date: Date, events: [CalendarEventSnapshot]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(upcomingDayLabel(for: date))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.55))
+                .font(IslandTypography.metadata)
+                .foregroundStyle(IslandPalette.secondary)
 
             ForEach(Array(events.prefix(3).enumerated()), id: \.offset) { _, event in
                 HStack(spacing: 6) {
@@ -259,27 +261,27 @@ struct CalendarExpandedView: View {
 
                     Text(event.title ?? L10n.text("Untitled"))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.78))
+                        .foregroundStyle(IslandPalette.secondary)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
 
                     if event.isAllDay {
                         Text("All Day")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.white.opacity(0.35))
+                            .font(IslandTypography.metadata)
+                            .foregroundStyle(IslandPalette.tertiary)
                     } else {
                         Text(timeFormatter.string(from: event.startDate))
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.white.opacity(0.35))
+                            .font(IslandTypography.metadata)
+                            .foregroundStyle(IslandPalette.tertiary)
                     }
                 }
             }
 
             if events.count > 3 {
                 Text("+\(events.count - 3) more")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.white.opacity(0.3))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.tertiary)
                     .padding(.leading, 8)
             }
         }
@@ -302,23 +304,23 @@ struct CalendarExpandedView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(event.title ?? L10n.text("Untitled"))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.88))
+                    .foregroundStyle(IslandPalette.label)
                     .lineLimit(1)
 
                 if event.isAllDay {
                     Text("All Day")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.tertiary)
                 } else {
                     Text("\(timeFormatter.string(from: event.startDate)) – \(timeFormatter.string(from: event.endDate))")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.45))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.tertiary)
                 }
 
                 if let location = event.location, !location.isEmpty {
                     Text(location)
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.35))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -330,20 +332,20 @@ struct CalendarExpandedView: View {
                     Button { appState.openExternalURL(url, for: .calendar) } label: {
                         eventActionIcon("video.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslandButtonStyle())
                     .help("Open meeting link")
 
                     Button { copy(url: url) } label: {
                         eventActionIcon("doc.on.doc")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslandButtonStyle())
                     .help("Copy meeting link")
                 }
 
                 Button { manager.hideCalendar(for: event) } label: {
                     eventActionIcon("eye.slash")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandButtonStyle())
                 .help("Hide this calendar")
             }
             .padding(.top, 4)
@@ -363,8 +365,8 @@ struct CalendarExpandedView: View {
 
     private func eventActionIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundColor(.white.opacity(0.88))
+            .font(IslandTypography.metadata)
+            .foregroundStyle(IslandPalette.label)
             .frame(width: 24, height: 24)
             .background(Color.white.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -406,7 +408,7 @@ struct CalendarExpandedView: View {
                     .fill(dayCellBackground(isToday: isToday, isSelected: isSelected))
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle())
     }
 
     private func dayForeground(isInDisplayedMonth: Bool, isToday: Bool, isSelected: Bool) -> Color {
@@ -432,13 +434,13 @@ struct CalendarExpandedView: View {
     private func monthButton(icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.white.opacity(0.9))
+                .font(IslandTypography.metadata)
+                .foregroundStyle(IslandPalette.primary)
                 .frame(width: 20, height: 20)
                 .background(Color.white.opacity(0.08))
                 .clipShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandButtonStyle())
     }
 
     // MARK: - Helpers

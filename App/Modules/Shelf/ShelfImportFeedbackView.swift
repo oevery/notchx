@@ -27,14 +27,16 @@ struct ShelfImportFeedbackView: View {
             if !shelf.importResults.isEmpty {
                 Button(L10n.text("Import Results")) { showHistory = true }
                     .accessibilityIdentifier("shelf-import-results")
-                    .popover(isPresented: $showHistory) { history }
+                    .popover(isPresented: $showHistory) {
+                        history.modifier(IslandNativePopoverSurface())
+                    }
             }
         }
-        .controlSize(.small)
+        .basicControlSize(.small)
         .frame(height: ShelfGridLayout.feedbackHeight)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("shelf-feedback")
-        .islandPopoverInteraction(isPresented: $showHistory, module: .shelf)
+        .islandTransientInteraction(isPresented: $showHistory, module: .shelf)
     }
 
     private var summary: String {
@@ -80,11 +82,6 @@ struct ShelfImportFeedbackView: View {
         }
         .padding(16)
         .frame(width: 420, height: 280)
-        .foregroundStyle(.primary)
-        .buttonStyle(.bordered)
-        // A popover is a separate native presentation. Give its material,
-        // text and controls the same appearance as the black island surface.
-        .preferredColorScheme(.dark)
     }
 
     private func statusTitle(_ status: ShelfImportStatus) -> String {

@@ -6,15 +6,16 @@ struct IslandPageTransition<Key: Hashable, Content: View>: View {
     let key: Key
     @ViewBuilder var content: () -> Content
     var body: some View {
-        ZStack(alignment: .topLeading) { content().id(key).transition(.opacity) }
+        ZStack(alignment: .topLeading) { content().id(key).transition(motion.pageTransition) }
             .animation(motion.content, value: key)
     }
 }
 
 /// A disclosure's arrow/text form its entire hit area. The caller owns state
 /// and content placement, including disclosures controlled from a fixed footer.
-struct IslandDisclosureButton<Label: View>: View {
+struct DisclosureTrigger<Label: View>: View {
     @Environment(\.islandMotion) private var motion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let expanded: Bool
     let action: () -> Void
     @ViewBuilder var label: () -> Label
@@ -24,13 +25,13 @@ struct IslandDisclosureButton<Label: View>: View {
                 Image(systemName: "chevron.right")
                     .accessibilityHidden(true)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
-                    .animation(motion.content, value: expanded)
+                    .animation(motion.reduced || reduceMotion ? nil : motion.content, value: expanded)
                 label()
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityValue(expanded ? L10n.text("Expanded") : L10n.text("Collapsed"))
     }
 }

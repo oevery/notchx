@@ -117,7 +117,7 @@ private struct ModuleManagementRow: View {
             Button(L10n.text("Details")) { showDetails(module) }
                 .accessibilityLabel(L10n.format("%@ settings", L10n.text(module.title)))
         }
-        .font(.body).controlSize(.regular)
+        .font(.body)
         .padding(.horizontal, 16).padding(.vertical, 10)
         .frame(minHeight: 46)
     }

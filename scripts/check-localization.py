@@ -136,18 +136,18 @@ class HomeLocalizationTests(unittest.TestCase):
         self.source = (ROOT / 'Home/HomeScreenView.swift').read_text()
 
     def test_empty_state_preserves_localized_text(self):
-        helper = self.source.split('private struct HomeEmptyState: View {', 1)[1]
-        helper = helper.split('private enum HomeTypography', 1)[0]
+        self.assertIn('IslandEmptyState(', self.source)
+        design = (ROOT / 'Views/Shared/IslandDesign.swift').read_text()
+        helper = design.split('struct IslandEmptyState: View {', 1)[1]
         # String storage erases literal-key localization before Text sees it.
         for field in ('title', 'subtitle'):
             self.assertRegex(helper, rf'\blet {field}: Text\b')
-            self.assertRegex(helper, rf'\b{field}\s*\n\s*\.font\(')
 
     def test_builtin_home_copy_uses_localization_entry_points(self):
         keys = {decode(match.group(1)) for match in CALL.finditer(self.source)}
         expected = {
             'No home modules enabled', 'Enable modules in Settings to show them here.',
-            'Nothing coming up', 'Your schedule is clear for now.',
+            'Nothing coming up', 'Your schedule is clear for now.', 'Up Next',
             'Fetching weather', 'Weather unavailable',
             'Getting your local conditions.', 'Allow location access to fetch local weather.',
             'No events scheduled today', '1 event coming up', '%d events coming up',
@@ -174,11 +174,12 @@ class IslandPresentationTests(unittest.TestCase):
     def source(self, path):
         return (ROOT / path).read_text()
 
-    def test_black_island_scopes_its_semantic_color_scheme(self):
+    def test_island_scopes_its_semantic_color_scheme(self):
         source = self.source('Views/IslandContainerView.swift')
         root_body = source.split('// MARK: - Surface', 1)[0]
         self.assertIn('.environment(\\.colorScheme, .dark)', root_body)
-        self.assertIn('Color.black.opacity(0.98)', source)
+        self.assertIn('.preferredColorScheme(.dark)', root_body)
+        self.assertIn('IslandSurfaceBackground(shape:', source)
         # Settings remains in a separate hosting root and follows macOS.
         for path in [ROOT / 'Application/NotchXApp.swift',
                      ROOT / 'Application/AppDelegate.swift',

@@ -276,7 +276,7 @@ private struct AgentSettingsSheet<Content: View, Actions: View>: View {
             }
             content
             Divider()
-            actions.controlSize(.regular)
+            actions
         }
         .padding(20).frame(width: 560).fixedSize(horizontal: false, vertical: true)
     }

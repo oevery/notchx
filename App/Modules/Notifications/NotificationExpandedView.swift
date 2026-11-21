@@ -35,23 +35,10 @@ struct NotificationExpandedView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "bell.slash")
-                .font(.system(size: 18))
-                .foregroundColor(.white.opacity(0.4))
-
-            Text("No Notifications")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
-
-            if (presentationState ?? appState.currentState) == .fullExpanded {
-                Text("Supported sources will appear here")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.3))
-            }
-        }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        IslandEmptyState(icon: "bell.slash", title: Text("No Notifications"),
+                         subtitle: (presentationState ?? appState.currentState) == .fullExpanded
+                            ? Text("Supported sources will appear here") : Text(""),
+                         fillsAvailableSpace: true)
     }
 
     private var expandedNotificationContent: some View {
@@ -119,17 +106,17 @@ struct NotificationExpandedView: View {
     private var footerBar: some View {
         HStack(spacing: 6) {
             Text(L10n.format(manager.recentNotifications.count == 1 ? "%d notification" : "%d notifications", manager.recentNotifications.count))
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.34))
+                .font(IslandTypography.metadata)
+                .foregroundStyle(IslandPalette.tertiary)
 
             Spacer(minLength: 0)
 
             Button(action: { manager.clearAll() }) {
                 Text("Clear All")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.58))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(IslandPalette.secondary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandButtonStyle())
             .help("Clear the NotchX feed only")
         }
         .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18, alignment: .center)
@@ -169,8 +156,8 @@ struct NotificationExpandedView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             if featured {
                                 Text(notification.appName)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.white.opacity(0.46))
+                                    .font(IslandTypography.metadata)
+                                    .foregroundStyle(IslandPalette.tertiary)
                                     .lineLimit(1)
                             }
 
@@ -184,15 +171,15 @@ struct NotificationExpandedView: View {
 
                         Text(timeAgo(notification.timestamp))
                             .font(.system(size: featured ? 9 : 9))
-                            .foregroundColor(.white.opacity(featured ? 0.4 : 0.3))
+                            .foregroundStyle(IslandPalette.tertiary)
                             .lineLimit(1)
                             .fixedSize()
                     }
 
                     if let message = message(for: notification) {
                         Text(message)
-                            .font(.system(size: 9.5))
-                            .foregroundColor(.white.opacity(0.72))
+                            .font(IslandTypography.metadata)
+                            .foregroundStyle(IslandPalette.secondary)
                             .lineLimit(1)
                             .multilineTextAlignment(.leading)
                     }
@@ -303,7 +290,7 @@ struct NotificationExpandedView: View {
         } else {
             Image(systemName: notification.appIcon)
                 .font(.system(size: max(10, size * 0.58)))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundStyle(IslandPalette.label)
                 .frame(width: size, height: size)
         }
     }
@@ -349,11 +336,14 @@ struct NotificationAlertControls: View {
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 60)) { _ in
             HStack(spacing: 10) {
-                Menu(L10n.text("Pause alerts")) {
-                    Button(L10n.text("30 minutes")) { manager.pauseAlerts(for: 1800) }
-                    Button(L10n.text("1 hour")) { manager.pauseAlerts(for: 3600) }
-                }
-                .fixedSize().accessibilityIdentifier("notification-pause-alerts")
+                let pauseTitle = L10n.text("Pause alerts")
+                IslandMenuButton(label: pauseTitle, title: pauseTitle, identifier: "notification-pause-alerts",
+                    module: .notifications, items: [
+                        IslandMenuItem(title: L10n.text("30 minutes")) { manager.pauseAlerts(for: 1800) },
+                        IslandMenuItem(title: L10n.text("1 hour")) { manager.pauseAlerts(for: 3600) }
+                    ])
+                .islandInputChrome(insetsContent: false)
+                .fixedSize()
                 .help("Pausing stops automatic alerts; allowed items still appear in the feed.")
                 if manager.alertsArePaused {
                     if let until = manager.alertsPausedUntil {
@@ -362,9 +352,12 @@ struct NotificationAlertControls: View {
                     }
                     Spacer(minLength: 0)
                     Button(L10n.text("Resume alerts")) { manager.pauseAlerts(for: nil) }
+                        .buttonStyle(IslandButtonStyle(.secondary))
                         .accessibilityIdentifier("notification-resume-alerts")
                 } else { Spacer(minLength: 0) }
-            }.font(.caption)
+            }
+            .font(IslandTypography.secondary)
+            .basicControlSize(.small)
         }
     }
 }
@@ -481,7 +474,7 @@ private struct SwipeToDismissNotificationRow<Content: View>: View {
 
     private func swipeIndicator(visible: Bool) -> some View {
         Image(systemName: "xmark")
-            .font(.system(size: 10, weight: .bold))
+            .font(IslandTypography.metadata)
             .foregroundColor(.white.opacity(visible ? 0.88 : 0))
             .frame(width: 22, height: 22)
             .background(

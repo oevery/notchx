@@ -40,7 +40,7 @@ struct SystemHUDExpandedView: View {
 
                     Text("\(currentPercentage)%")
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundStyle(IslandPalette.secondary)
                 }
 
                 SliderBar(value: currentBinding)
@@ -48,8 +48,8 @@ struct SystemHUDExpandedView: View {
 
                 if appState.activeBuiltInModule == .volumeHUD {
                     Text(volumeManager.outputDeviceName)
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.tertiary)
                 }
             }
         }
@@ -58,12 +58,17 @@ struct SystemHUDExpandedView: View {
     private var fullExpandedVolumeView: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Picker(L10n.text("Output device"), selection: Binding(get: { volumeManager.selectedOutputDeviceID }, set: { volumeManager.selectOutputDevice($0) })) {
-                    ForEach(volumeManager.outputDevices) { device in Label(device.name, systemImage: device.icon).tag(device.id) }
-                }.labelsHidden().accessibilityIdentifier("volume-output-device")
+                let devices = volumeManager.outputDevices
+                IslandMenuButton(label: L10n.text("Output device"), identifier: "volume-output-device", module: .volumeHUD,
+                    items: devices.map { device in
+                        IslandMenuItem(title: device.name, symbol: device.icon) { volumeManager.selectOutputDevice(device.id) }
+                    }, selectedIndex: devices.firstIndex { $0.id == volumeManager.selectedOutputDeviceID } ?? 0)
+                    .islandInputChrome(insetsContent: false)
                 Button(volumeManager.isMuted ? L10n.text("Unmute") : L10n.text("Mute")) { volumeManager.toggleMute() }.disabled(!volumeManager.canMute)
+                    .buttonStyle(IslandButtonStyle(.secondary))
                     .accessibilityIdentifier("volume-mute")
             }
+            .basicControlSize(.small)
             HStack(spacing: 12) {
                 Image(systemName: volumeManager.volumeIconName)
                     .font(.system(size: 18, weight: .semibold))
@@ -78,7 +83,7 @@ struct SystemHUDExpandedView: View {
                         Spacer()
                         Text("\(volumeManager.volumePercentage)%")
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundStyle(IslandPalette.secondary)
                     }
                     SliderBar(value: currentBinding)
                         .disabled(!volumeManager.canSetVolume)
@@ -86,15 +91,15 @@ struct SystemHUDExpandedView: View {
             }
 
             Text(volumeManager.outputDeviceName)
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.45))
+                .font(IslandTypography.metadata)
+                .foregroundStyle(IslandPalette.tertiary)
             if !volumeManager.canSetVolume {
                 Text("This output device does not support system volume control.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(IslandTypography.secondary)
+                    .foregroundStyle(IslandPalette.secondary)
             }
             if let error = volumeManager.controlError {
-                Text(error).font(.caption).foregroundStyle(.secondary)
+                Text(error).font(IslandTypography.secondary).foregroundStyle(IslandPalette.secondary)
             }
 
             Divider()
@@ -102,14 +107,14 @@ struct SystemHUDExpandedView: View {
 
             Text("Media Apps")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundStyle(IslandPalette.label)
             Text("Media app sliders support selected players and browser media only. They are not a system-wide app mixer.")
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(IslandTypography.metadata).foregroundStyle(IslandPalette.secondary)
 
             if volumeManager.mediaAppVolumes.isEmpty {
                 Text("No supported media apps are currently playing.")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(IslandPalette.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 StableScrollView(.vertical, showsIndicators: false) {
@@ -195,8 +200,8 @@ private struct MediaAppVolumeRow: View {
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                 } else {
                     Image(systemName: app.iconName)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.85))
+                        .font(IslandTypography.metadata)
+                        .foregroundStyle(IslandPalette.label)
                         .frame(width: 14)
                 }
 
@@ -207,12 +212,12 @@ private struct MediaAppVolumeRow: View {
                 Spacer()
 
                 Text(app.statusText)
-                    .font(.system(size: 10))
-                    .foregroundColor(app.isPlaying ? .green : .white.opacity(0.55))
+                    .font(IslandTypography.metadata)
+                    .foregroundStyle(app.isPlaying ? AnyShapeStyle(Color.green) : AnyShapeStyle(IslandPalette.secondary))
 
                 Text("\(Int(app.volume * 100))%")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.72))
+                    .font(IslandTypography.time)
+                    .foregroundStyle(IslandPalette.secondary)
             }
 
             SliderBar(
